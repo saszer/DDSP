@@ -10,7 +10,7 @@
 
 ## 🎻 Overview
 
-DDSP Neural Cello is a state-of-the-art audio synthesis system that combines Google's Differentiable Digital Signal Processing (DDSP) framework with professional audio processing techniques. Built with audio quality as the top priority, this system generates realistic cello audio from MIDI input with enterprise-grade features.
+DDSP Neural Cello is a state-of-the-art audio synthesis system that combines Google's Differentiable Digital Signal Processing (DDSP) framework with professional audio processing techniques.This system generates realistic cello audio from MIDI input using neural samples trained on professionally recorded cello data.
 
 ### Key Features
 
@@ -463,12 +463,13 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 🙏 Acknowledgments
 
+- **Cinematic Composing** ([cinematiccomposing.com](https://cinematiccomposing.com)) - Original project concept and cello neural training samples
 - **Google Research** for the DDSP framework
 - **Magenta Team** for audio synthesis research
 - **Librosa** for audio analysis tools
 - **FastAPI** for the web framework
 - **React/Next.js** for the frontend
-- **embracingearth.space** for enterprise audio solutions
+- **embracingearth.space** for development
 
 
 - **Issues**: [GitHub Issues](https://github.com/your-org/ddsp-neural-cello/issues)
