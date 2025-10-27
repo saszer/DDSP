@@ -1090,16 +1090,20 @@ def run_server():
     print("embracingearth.space - Premium AI Audio Technology")
     print("")
     print("Starting server...")
-    print("Backend API: http://localhost:8000")
-    print("")
+    
+    # Get port from environment (Fly.io sets PORT), default to 8000 for local dev
+    port = int(os.getenv('PORT', 8000))
+    host = '0.0.0.0'  # Bind to all interfaces for Fly.io deployment
+    
+    print(f"Binding to {host}:{port}")
     
     # Create necessary directories
     Path(Config.OUTPUT_PATH).mkdir(exist_ok=True)
     Path(Config.MODEL_PATH).mkdir(exist_ok=True)
     
-    # Start server
-    server = HTTPServer(('localhost', 8000), DDSPHandler)
-    print("SUCCESS: Server running on http://localhost:8000")
+    # Start server - bind to all interfaces, not just localhost
+    server = HTTPServer((host, port), DDSPHandler)
+    print(f"SUCCESS: Server running on http://{host}:{port}")
     print("Press Ctrl+C to stop")
     print("")
     

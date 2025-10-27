@@ -26,9 +26,5 @@ primary_region = "iad"
 [[vm]]
   cpu_kind = "shared"
   cpus = 1
-  memory_mb = 512
-
-[[mounts]]
-  source = "model_storage"
-  destination = "/app/models"
+  memory_mb = 1024  # Increased for audio processing workloads
 
