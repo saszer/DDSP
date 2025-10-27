@@ -76,12 +76,6 @@ temp_audio/
 *.flac
 !neural_cello_training_samples/**/*.wav
 
-# Model files
-models/*.h5
-models/*.pkl
-models/*.joblib
-models/*.pt
-models/*.pth
 
 # Logs
 logs/
