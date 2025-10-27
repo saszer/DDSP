@@ -1,7 +1,7 @@
 # Fly.io configuration for DDSP Neural Cello
 # embracingearth.space
 
-app = "ddsp-cello-v1"  # Change this to your unique name
+app = "ddsp"  # Change this to your unique name
 primary_region = "iad"
 
 [build]

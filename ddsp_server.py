@@ -705,7 +705,25 @@ model_manager = DDSPModelManager()
 # Simple HTTP Server for API
 class DDSPHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path == '/health':
+        if self.path == '/' or self.path == '/index.html':
+            # Serve the frontend HTML file
+            index_path = Path('public/index.html')
+            if not index_path.exists():
+                # Fallback if public/index.html doesn't exist
+                index_path = Path('index.html')
+            
+            if index_path.exists():
+                self.send_response(200)
+                self.send_header('Content-type', 'text/html')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                with open(index_path, 'r', encoding='utf-8') as f:
+                    self.wfile.write(f.read().encode('utf-8'))
+            else:
+                self.send_response(404)
+                self.end_headers()
+        
+        elif self.path == '/health':
             self.send_response(200)
             self.send_header('Content-type', 'application/json')
             self.send_header('Access-Control-Allow-Origin', '*')
