@@ -28,3 +28,8 @@ primary_region = "iad"
   cpus = 1
   memory_mb = 1024  # Increased for audio processing workloads
 
+# Persistent storage for models (uploaded models persist across deployments)
+[[mounts]]
+  source = "model_storage"
+  destination = "/app/models"
+
