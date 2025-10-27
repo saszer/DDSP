@@ -27,12 +27,11 @@ COPY ddsp_sample_based.py .
 COPY ddsp_trainer.py .
 COPY audio_processor.py .
 
-# Copy model files
-COPY models/ ./models/
-COPY neural_cello_training_samples/ ./neural_cello_training_samples/
+# Create directories for output and models
+RUN mkdir -p output models
 
-# Create directories for output
-RUN mkdir -p output
+# Copy trained models if they exist (include default trained model)
+COPY models/ ./models/
 
 # Copy frontend static files
 COPY public/ ./public/
