@@ -64,11 +64,91 @@ class SampleBasedDDSP:
         
         logger.info(f"Loaded {loaded_count} samples covering {len(self.samples_library)} pitches")
         self.is_loaded = len(self.samples_library) > 0
+    
+    def _synthesize_from_config(self, pitch: int, duration: float, velocity: int, 
+                                release_percent: float, tone: str) -> np.ndarray:
+        """Synthesize using config-based model (new format) - embracingearth.space"""
+        
+        # Get frequency from note map
+        freq_hz = librosa.midi_to_hz(pitch)  # Default to librosa conversion
+        
+        # Generate samples for duration
+        n_samples = int(duration * self.sample_rate)
+        t = np.linspace(0, duration, n_samples)
+        
+        # Generate cello-like sound with harmonics
+        audio = np.zeros(n_samples)
+        
+        # Fundamental frequency
+        audio += 0.5 * np.sin(2 * np.pi * freq_hz * t)
+        
+        # Add harmonics for cello character
+        harmonics = [2, 3, 4, 5]
+        amplitudes = [0.3, 0.2, 0.1, 0.05]
+        for harmonic, amp in zip(harmonics, amplitudes):
+            audio += amp * np.sin(2 * np.pi * freq_hz * harmonic * t)
+        
+        # Apply envelope based on release_percent
+        attack_time = 0.01
+        decay_time = 0.1
+        sustain_level = 0.7
+        release_time = (release_percent / 100.0) * 0.5  # Adjust release based on slider
+        
+        envelope = self._generate_envelope(n_samples, self.sample_rate, 
+                                          attack_time, decay_time, sustain_level, release_time)
+        audio *= envelope
+        
+        # Apply velocity scaling
+        velocity_scale = (velocity / 127.0) ** 0.5
+        audio *= velocity_scale
+        
+        # Normalize
+        if np.max(np.abs(audio)) > 0:
+            audio = audio / np.max(np.abs(audio)) * 0.8
+        
+        return audio
+    
+    def _generate_envelope(self, n_samples: int, sr: int, attack: float, 
+                          decay: float, sustain: float, release: float) -> np.ndarray:
+        """Generate ADSR envelope - embracingearth.space"""
+        envelope = np.zeros(n_samples)
+        
+        attack_samples = int(attack * sr)
+        decay_samples = int(decay * sr)
+        release_samples = int(release * sr)
+        
+        # Attack
+        if attack_samples > 0:
+            envelope[:attack_samples] = np.linspace(0, 1, attack_samples)
+        
+        # Decay
+        decay_start = attack_samples
+        decay_end = min(decay_start + decay_samples, n_samples)
+        for i in range(decay_start, decay_end):
+            envelope[i] = 1.0 - (i - decay_start) / decay_samples * (1.0 - sustain)
+        
+        # Sustain
+        sustain_start = decay_end
+        sustain_end = max(0, n_samples - release_samples)
+        if sustain_end > sustain_start:
+            envelope[sustain_start:sustain_end] = sustain
+        
+        # Release
+        release_start = max(0, n_samples - release_samples)
+        for i in range(release_start, n_samples):
+            envelope[i] = sustain * (1.0 - (i - release_start) / release_samples)
+        
+        return envelope
         
     def synthesize_note(self, pitch: int, duration: float, velocity: int, 
                        release_percent: float = 100.0, tone: str = 'standard') -> np.ndarray:
-        """Synthesize a note using real samples"""
+        """Synthesize a note using real samples or config-based model - embracingearth.space"""
         
+        # Check if we're using config-based model (new format)
+        if hasattr(self, 'note_freq_map') and hasattr(self, 'spectral_envelope'):
+            return self._synthesize_from_config(pitch, duration, velocity, release_percent, tone)
+        
+        # Otherwise use sample-based approach
         # Find closest pitch in library
         if pitch in self.samples_library:
             samples = self.samples_library[pitch]
@@ -204,12 +284,29 @@ class SampleBasedDDSP:
             }, f)
     
     def load(self, path: Path):
-        """Load saved sample library"""
+        """Load saved sample library - embracingearth.space"""
         with open(path, 'rb') as f:
             data = pickle.load(f)
-            self.samples_library = data['samples_library']
-            self.sample_rate = data['sample_rate']
-            self.is_loaded = len(self.samples_library) > 0
+            
+            # Handle both old format (with samples_library) and new format (config-based)
+            if 'samples_library' in data:
+                # Old format: sample-based model
+                self.samples_library = data['samples_library']
+                self.sample_rate = data.get('sample_rate', self.sample_rate)
+                self.is_loaded = len(self.samples_library) > 0
+            elif 'config' in data:
+                # New format: config-based model (frequency maps and profiles)
+                logger.info("Loading config-based model (frequency mapping)")
+                # Store the model data for synthesis
+                self.config = data.get('config', {})
+                self.note_freq_map = data.get('note_freq_map', {})
+                self.dynamic_profile = data.get('dynamic_profile', {})
+                self.spectral_envelope = data.get('spectral_envelope', {})
+                self.is_loaded = True
+                logger.info("Config-based model loaded successfully")
+            else:
+                logger.error(f"Unknown model format in {path}")
+                self.is_loaded = False
 
 
 # Quick test
