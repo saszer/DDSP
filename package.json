@@ -1,0 +1,46 @@
+{
+  "name": "ddsp-neural-cello",
+  "version": "1.0.0",
+  "description": "Neural Cello Synthesis with DDSP - embracingearth.space",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage"
+  },
+  "dependencies": {
+    "@types/node": "20.6.3",
+    "@types/react": "18.2.22",
+    "@types/react-dom": "18.2.7",
+    "autoprefixer": "10.4.15",
+    "axios": "1.5.0",
+    "critters": "^0.0.23",
+    "framer-motion": "10.16.4",
+    "lucide-react": "0.279.0",
+    "next": "13.5.4",
+    "postcss": "8.4.29",
+    "react": "18.2.0",
+    "react-dom": "18.2.0",
+    "react-dropzone": "14.2.3",
+    "react-hot-toast": "2.4.1",
+    "tailwindcss": "3.3.3",
+    "tone": "14.7.77",
+    "typescript": "5.2.2",
+    "wavesurfer.js": "7.3.0",
+    "zustand": "4.4.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/aspect-ratio": "^0.4.2",
+    "@tailwindcss/forms": "^0.5.3",
+    "@tailwindcss/typography": "^0.5.9",
+    "@testing-library/jest-dom": "^5.17.0",
+    "@testing-library/react": "^13.4.0",
+    "eslint": "8.49.0",
+    "eslint-config-next": "13.5.4",
+    "jest": "^29.6.2"
+  }
+}

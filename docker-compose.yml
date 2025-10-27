@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  # DDSP Backend API - embracingearth.space
+  ddsp-api:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./neural_cello_training_samples:/app/data/training_samples:ro
+      - ./models:/app/models
+      - ./output:/app/output
+    environment:
+      - PYTHONPATH=/app
+      - MODEL_PATH=/app/models
+      - TRAINING_DATA_PATH=/app/data/training_samples
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Next.js Frontend
+  ddsp-web:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+    depends_on:
+      - ddsp-api
+    restart: unless-stopped
+
+volumes:
+  models:
+  output:
+
+
+
+
+

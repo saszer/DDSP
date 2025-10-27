@@ -1,0 +1,836 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DDSP Neural Cello - embracingearth.space</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* embracingearth.space - Premium DDSP Neural Cello Styles */
+        .glass-dark {
+            background: rgba(0, 0, 0, 0.2);
+            backdrop-filter: blur(16px);
+            border: 1px solid rgba(168, 85, 247, 0.2);
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #9333ea 0%, #3b82f6 100%);
+            transition: all 0.2s;
+        }
+        
+        .btn-primary:hover {
+            background: linear-gradient(135deg, #7c3aed 0%, #2563eb 100%);
+            transform: scale(1.05);
+        }
+        
+        .audio-waveform {
+            background: linear-gradient(90deg, #9333ea, #3b82f6);
+            height: 80px;
+            border-radius: 8px;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .audio-waveform::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
+            animation: wave 2s infinite;
+        }
+        
+        @keyframes wave {
+            0% { left: -100%; }
+            100% { left: 100%; }
+        }
+        
+        .loading-spinner {
+            border: 3px solid rgba(255,255,255,0.3);
+            border-top: 3px solid #9333ea;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .quality-option {
+            transition: all 0.2s;
+        }
+        
+        .quality-option:hover {
+            transform: scale(1.02);
+        }
+        
+        .quality-option.selected {
+            background: linear-gradient(135deg, #9333ea 0%, #3b82f6 100%);
+            border-color: #9333ea;
+        }
+        
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        @keyframes pulse {
+            0%, 100% {
+                opacity: 1;
+            }
+            50% {
+                opacity: 0.5;
+            }
+        }
+        
+        .loading-animation {
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+    </style>
+</head>
+<body class="min-h-screen bg-gradient-to-br from-purple-900 via-blue-900 to-indigo-900 text-white">
+    <div class="container mx-auto px-4 py-8">
+        <!-- Header -->
+        <div class="text-center mb-8">
+            <h1 class="text-4xl font-bold mb-2 bg-gradient-to-r from-purple-400 to-blue-400 bg-clip-text text-transparent">
+                DDSP Neural Cello
+            </h1>
+            <p class="text-gray-300">embracingearth.space - Premium AI Audio Synthesis</p>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <!-- Left Column -->
+            <div class="space-y-6">
+                <!-- MIDI Upload -->
+                <div class="glass-dark rounded-xl p-6">
+                    <h2 class="text-xl font-semibold mb-4 flex items-center">
+                        <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
+                        </svg>
+                        MIDI File Upload
+                    </h2>
+                    
+                    <div id="upload-area" class="border-2 border-dashed border-purple-400 rounded-lg p-8 text-center cursor-pointer hover:border-purple-300 transition-colors">
+                        <svg class="w-12 h-12 mx-auto mb-4 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
+                        </svg>
+                        <p class="text-lg mb-2">Drop your MIDI file here or click to browse</p>
+                        <p class="text-sm text-gray-400">Supports .mid and .midi files</p>
+                    </div>
+                    
+                    <input type="file" id="file-input" accept=".mid,.midi" class="hidden">
+                    
+                    <div id="file-info" class="mt-4 hidden">
+                        <div class="flex items-center p-3 bg-purple-900/30 rounded-lg">
+                            <svg class="w-5 h-5 mr-3 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"></path>
+                            </svg>
+                            <span id="file-name" class="text-sm"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Settings -->
+                <div class="glass-dark rounded-xl p-6">
+                    <h2 class="text-xl font-semibold mb-4">Audio Settings</h2>
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium mb-2">Sample Rate</label>
+                            <select id="sample-rate-select" class="w-full p-3 bg-gray-800 border border-gray-600 rounded-lg text-white">
+                                <option value="44100">44.1 kHz (CD Quality)</option>
+                                <option value="48000" selected>48 kHz (Professional Standard)</option>
+                                <option value="96000">96 kHz (High-End)</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium mb-2">Bit Depth</label>
+                            <select id="bit-depth-select" class="w-full p-3 bg-gray-800 border border-gray-600 rounded-lg text-white">
+                                <option value="16">16-bit (CD Quality)</option>
+                                <option value="24" selected>24-bit (Professional)</option>
+                                <option value="32">32-bit (Studio Master)</option>
+                            </select>
+                        </div>
+                        <div class="pt-2">
+                            <label class="flex items-center cursor-pointer">
+                                <input type="checkbox" id="mastering-checkbox" checked class="mr-3 w-4 h-4">
+                                <span class="text-sm">
+                                    <span class="font-medium">Professional Mastering</span>
+                                    <span class="text-gray-400 block text-xs mt-1">Applies compression, EQ, and subtle reverb for natural cello sound</span>
+                                </span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Synthesis Controls -->
+                <div class="glass-dark rounded-xl p-6">
+                    <h2 class="text-xl font-semibold mb-4">Synthesis Controls</h2>
+                    
+                    <!-- Release / Staccato Slider -->
+                    <div class="mb-6">
+                        <div class="flex justify-between items-center mb-2">
+                            <span class="text-sm font-medium">Release Duration</span>
+                            <span id="release-value" class="text-blue-400 font-semibold">20%</span>
+                        </div>
+                        <input type="range" id="release-slider" min="0" max="100" value="20" 
+                            class="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-purple-500">
+                        <div class="flex justify-between text-xs text-gray-500 mt-1">
+                            <span>Staccato (0%)</span>
+                            <span id="release-label" class="text-blue-400">Short Release (20%)</span>
+                            <span class="text-purple-400">Full Sustain (100%)</span>
+                        </div>
+                        <p class="text-xs text-gray-400 mt-1">Note: Higher values = longer sustained notes</p>
+                    </div>
+                    
+                    <!-- Cello Section Tone Dropdown -->
+                    <div class="mb-6">
+                        <label class="block text-sm font-medium mb-2">Cello Section Tone</label>
+                        <select id="tone-selector" class="w-full p-3 bg-gray-800 border border-gray-600 rounded-lg text-white">
+                            <option value="standard">Standard</option>
+                            <option value="warm">Warm</option>
+                            <option value="bright">Bright</option>
+                            <option value="dark">Dark</option>
+                            <option value="vintage">Vintage</option>
+                        </select>
+                    </div>
+                    
+                    <!-- Regenerate Button -->
+                    <div class="mb-4">
+                        <button id="regenerate-btn" class="w-full btn-primary px-6 py-3 rounded-lg font-semibold">
+                            Regenerate Audio
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Column -->
+            <div class="space-y-6">
+                <!-- Generated Audio -->
+                <div class="glass-dark rounded-xl p-6">
+                    <h2 class="text-xl font-semibold mb-4 flex items-center">
+                        <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z"></path>
+                        </svg>
+                        Generated Audio
+                    </h2>
+                    
+                    <div id="generated-audio" class="hidden">
+                        <div class="bg-purple-900/30 rounded-lg p-4 mb-4">
+                            <div class="flex items-center justify-between mb-2">
+                                <span id="audio-filename" class="font-semibold">test.mid</span>
+                                <div class="flex space-x-2">
+                                    <button id="copy-btn" class="p-2 bg-gray-700 rounded-lg hover:bg-gray-600 transition-colors">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+                                        </svg>
+                                    </button>
+                                    <button id="download-btn" class="p-2 bg-gray-700 rounded-lg hover:bg-gray-600 transition-colors">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                                        </svg>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="text-sm text-gray-400 mb-3">
+                                <span id="audio-duration">2.00s</span> • <span id="audio-quality">professional quality</span>
+                            </div>
+                            <div class="mb-4">
+                                <audio id="audio-player" controls class="w-full bg-gray-800 rounded">
+                                    <source src="" type="audio/wav">
+                                    Your browser does not support the audio element.
+                                </audio>
+                            </div>
+                            <div class="audio-waveform mb-4"></div>
+                            <div class="grid grid-cols-2 gap-2 text-sm">
+                                <div class="bg-gray-800/50 rounded p-2">
+                                    <div class="font-semibold">Format:</div>
+                                    <div id="audio-format">WAV</div>
+                                </div>
+                                <div class="bg-gray-800/50 rounded p-2">
+                                    <div class="font-semibold">Bit Depth:</div>
+                                    <div id="audio-bitdepth">24-bit</div>
+                                </div>
+                                <div class="bg-gray-800/50 rounded p-2">
+                                    <div class="font-semibold">Mastering:</div>
+                                    <div id="audio-mastering">Applied</div>
+                                </div>
+                                <div class="bg-gray-800/50 rounded p-2">
+                                    <div class="font-semibold">Quality:</div>
+                                    <div id="audio-quality-level">Professional</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div id="loading-audio" class="hidden text-center py-8">
+                        <div class="loading-spinner mx-auto mb-4 loading-animation"></div>
+                        <p class="text-gray-400 loading-animation">Generating high-quality audio...</p>
+                        <p class="text-sm text-gray-500 mt-2 loading-animation">Processing MIDI and synthesizing cello sounds</p>
+                    </div>
+                    
+                    <div id="no-audio" class="text-center py-8 text-gray-400">
+                        <svg class="w-12 h-12 mx-auto mb-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"></path>
+                        </svg>
+                        <p>Upload a MIDI file to generate audio</p>
+                    </div>
+                </div>
+
+                <!-- Model Selection -->
+                <div class="glass-dark rounded-xl p-6">
+                    <h2 class="text-xl font-semibold mb-4">Model Selection</h2>
+                    
+                    <!-- Model Dropdown -->
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium mb-2">Active Model</label>
+                        <select id="model-selector" class="w-full p-3 bg-gray-800 border border-gray-600 rounded-lg text-white">
+                            <option value="default">Default Sample-Based Model (1,276 samples)</option>
+                        </select>
+                    </div>
+                    
+                    <!-- Upload Custom Model -->
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium mb-2">Upload Custom Model</label>
+                        <input type="file" id="model-file-input" accept=".pkl,.pickle,.zip" class="hidden">
+                        <button id="upload-model-btn" class="w-full btn-primary px-4 py-2 rounded-lg text-sm">
+                            Choose Model File (.pkl)
+                        </button>
+                        <p class="text-xs text-gray-400 mt-2">
+                            Upload a trained .pkl model file to use custom cello samples
+                        </p>
+                    </div>
+                    
+                    <!-- Model Info -->
+                    <div id="model-info" class="p-3 bg-blue-900/20 rounded-lg border border-blue-500/30 text-sm">
+                        <div class="mb-2">
+                            <span class="text-gray-400">Model Type:</span>
+                            <span id="model-type" class="ml-2 text-green-400">Sample-Based Cello</span>
+                        </div>
+                        <div class="mb-2">
+                            <span class="text-gray-400">Samples:</span>
+                            <span id="samples-count" class="ml-2 text-blue-400">1,276 trained cello recordings</span>
+                        </div>
+                        <div class="mb-2">
+                            <span class="text-gray-400">Range:</span>
+                            <span id="pitch-range" class="ml-2 text-purple-400">40 MIDI pitches (C2-C6)</span>
+                        </div>
+                        <div class="mt-3 pt-3 border-t border-gray-700">
+                            <p class="text-xs text-gray-500">
+                                <strong>How it works:</strong> Uses real cello recordings with pitch shifting and dynamic envelopes for natural sound.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // DDSP Neural Cello - Frontend JavaScript
+        // embracingearth.space - Premium AI Audio Synthesis
+        
+        const API_BASE = 'http://localhost:8000';
+        
+        // Load available models on page load
+        function loadAvailableModels() {
+            fetch(`${API_BASE}/api/models`)
+                .then(response => response.json())
+                .then(data => {
+                    const modelSelector = document.getElementById('model-selector');
+                    modelSelector.innerHTML = '';
+                    
+                    // Add default option
+                    const defaultOption = document.createElement('option');
+                    defaultOption.value = 'default';
+                    defaultOption.textContent = 'Default Sample-Based Model (1,276 samples) [LOADED]';
+                    modelSelector.appendChild(defaultOption);
+                    
+                    if (data.models && data.models.length > 0) {
+                        data.models.forEach(model => {
+                            const option = document.createElement('option');
+                            option.value = model.name;
+                            option.textContent = `${model.name} (${(model.size / 1024).toFixed(1)} KB)`;
+                            if (model.is_loaded) {
+                                option.textContent += ' [ACTIVE]';
+                            }
+                            modelSelector.appendChild(option);
+                        });
+                    }
+                    
+                    // Select current model if available
+                    if (data.current_model) {
+                        modelSelector.value = data.current_model;
+                    }
+                })
+                .catch(error => {
+                    console.error('Failed to load models:', error);
+                    const modelSelector = document.getElementById('model-selector');
+                    modelSelector.innerHTML = '<option value="default">Default Model [LOADED]</option>';
+                });
+        }
+        
+        function handleModelChange(event) {
+            const modelName = event.target.value;
+            if (modelName === 'default') {
+                // Already using default model
+                return;
+            }
+            
+            // Switch to selected model
+            console.log(`Switching to model: ${modelName}`);
+            
+            fetch(`${API_BASE}/api/models/switch/${modelName}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        alert(`Successfully switched to model: ${modelName}`);
+                        // Update UI to show current model
+                        updateModelInfo(modelName);
+                    } else {
+                        alert(`Failed to switch model: ${data.message || data.error}`);
+                        // Revert selection
+                        event.target.value = 'default';
+                    }
+                })
+                .catch(error => {
+                    console.error('Model switch error:', error);
+                    alert('Failed to switch model');
+                    event.target.value = 'default';
+                });
+        }
+        
+        // Load models when page loads
+        loadAvailableModels();
+        let selectedQuality = 'professional';
+        let currentAudioFile = null;
+        let currentMIDIFile = null;
+        
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            initializeEventListeners();
+            updateTrainingStatus();
+            updateModelStatus(); // Add model status check
+        });
+        
+        function initializeEventListeners() {
+            // File upload
+            const uploadArea = document.getElementById('upload-area');
+            const fileInput = document.getElementById('file-input');
+            
+            uploadArea.addEventListener('click', () => fileInput.click());
+            uploadArea.addEventListener('dragover', handleDragOver);
+            uploadArea.addEventListener('drop', handleDrop);
+            fileInput.addEventListener('change', handleFileSelect);
+            
+            // Audio buttons
+            document.getElementById('download-btn').addEventListener('click', downloadAudio);
+            document.getElementById('copy-btn').addEventListener('click', copyAudioInfo);
+            
+            // Model upload
+            document.getElementById('upload-model-btn').addEventListener('click', () => {
+                document.getElementById('model-file-input').click();
+            });
+            document.getElementById('model-file-input').addEventListener('change', handleModelUpload);
+            
+            // Model selector
+            document.getElementById('model-selector').addEventListener('change', handleModelChange);
+            
+            // Synthesis controls
+            setupSynthesisControls();
+        }
+        
+        function setupSynthesisControls() {
+            // Release slider
+            const releaseSlider = document.getElementById('release-slider');
+            const releaseValue = document.getElementById('release-value');
+            const releaseLabel = document.getElementById('release-label');
+            
+            releaseSlider.addEventListener('input', (e) => {
+                const value = parseInt(e.target.value);
+                releaseValue.textContent = value + '%';
+                
+                // Map UI slider (0-100) to actual release percentage
+                // 0-20: Staccato to Short
+                // 20-50: Short to Moderate  
+                // 50-80: Moderate to Full
+                // 80-100: Full to Very Long
+                if (value >= 80) {
+                    releaseLabel.textContent = 'Very Long Sustain';
+                } else if (value >= 50) {
+                    releaseLabel.textContent = 'Full Sustain';
+                } else if (value >= 20) {
+                    releaseLabel.textContent = 'Moderate Release';
+                } else if (value >= 10) {
+                    releaseLabel.textContent = 'Short Release';
+                } else {
+                    releaseLabel.textContent = 'Staccato';
+                }
+            });
+            
+            // Tone selector
+            const toneSelector = document.getElementById('tone-selector');
+            toneSelector.addEventListener('change', (e) => {
+                console.log('Selected tone:', e.target.value);
+            });
+            
+            // Regenerate button
+            const regenerateBtn = document.getElementById('regenerate-btn');
+            regenerateBtn.addEventListener('click', function() {
+                regenerateAudio();
+            });
+        }
+        
+        function regenerateAudio() {
+            // Get current controls state
+            const releasePercent = document.getElementById('release-slider').value;
+            const tone = document.getElementById('tone-selector').value;
+            
+            // Store current parameters
+            localStorage.setItem('releasePercent', releasePercent);
+            localStorage.setItem('tone', tone);
+            
+            console.log('Regenerate clicked with:', { releasePercent, tone, hasFile: !!currentMIDIFile });
+            
+            // Check if we have a MIDI file to regenerate
+            const fileInput = document.getElementById('file-input');
+            let fileToUse = null;
+            
+            if (currentMIDIFile) {
+                fileToUse = currentMIDIFile;
+                console.log('Using stored MIDI file');
+            } else if (fileInput.files.length > 0) {
+                fileToUse = fileInput.files[0];
+                console.log('Using file input');
+            } else {
+                alert('No MIDI file to regenerate. Please upload a MIDI file first.');
+                document.getElementById('loading-audio').classList.add('hidden');
+                return;
+            }
+            
+            // Show loading
+            document.getElementById('generated-audio').classList.add('hidden');
+            document.getElementById('no-audio').classList.add('hidden');
+            document.getElementById('loading-audio').classList.remove('hidden');
+            
+            // Re-upload with new parameters
+            uploadMIDI(fileToUse);
+        }
+        
+        function handleDragOver(e) {
+            e.preventDefault();
+            e.currentTarget.classList.add('border-purple-300');
+        }
+        
+        function handleDrop(e) {
+            e.preventDefault();
+            e.currentTarget.classList.remove('border-purple-300');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                handleFile(files[0]);
+            }
+        }
+        
+        function handleFileSelect(e) {
+            const file = e.target.files[0];
+            if (file) {
+                handleFile(file);
+            }
+        }
+        
+        function handleFile(file) {
+            if (!file.name.toLowerCase().match(/\.(mid|midi)$/)) {
+                alert('Please select a MIDI file (.mid or .midi)');
+                return;
+            }
+            
+            // Store file info for regeneration
+            const fileName = file.name;
+            
+            // Convert to a persistent format for regeneration
+            const fileCopy = file;
+            file.arrayBuffer().then(buffer => {
+                const blob = new Blob([buffer], { type: 'audio/midi' });
+                currentMIDIFile = new File([blob], fileName, { type: 'audio/midi' });
+                console.log('File stored for regeneration:', fileName);
+            }).catch(err => {
+                console.error('Error storing file:', err);
+                currentMIDIFile = fileCopy;
+            });
+            
+            // Show file info
+            document.getElementById('file-name').textContent = fileName;
+            document.getElementById('file-info').classList.remove('hidden');
+            
+            // Upload file
+            uploadMIDI(file);
+        }
+        
+        function uploadMIDI(file) {
+            const formData = new FormData();
+            formData.append('file', file);
+            
+            // Get synthesis parameters from controls
+            const releasePercent = document.getElementById('release-slider').value;
+            const tone = document.getElementById('tone-selector').value;
+            
+            // Get audio settings
+            const sampleRate = document.getElementById('sample-rate-select').value;
+            const bitDepth = document.getElementById('bit-depth-select').value;
+            const mastering = document.getElementById('mastering-checkbox').checked;
+            
+            // Add parameters to form data with correct name format
+            formData.append('release_percent', releasePercent);
+            formData.append('tone', tone);
+            formData.append('sample_rate', sampleRate);
+            formData.append('bit_depth', bitDepth);
+            formData.append('apply_mastering', mastering ? 'true' : 'false');
+            
+            console.log('Uploading with parameters:', { releasePercent, tone, sampleRate, bitDepth, mastering, filename: file.name });
+            
+            // Show loading with estimated time
+            document.getElementById('loading-audio').classList.remove('hidden');
+            document.getElementById('generated-audio').classList.add('hidden');
+            document.getElementById('no-audio').classList.add('hidden');
+            
+            // Update loading message with progress
+            const loadingText = document.querySelector('#loading-audio p');
+            loadingText.textContent = 'Processing MIDI and generating audio...';
+            
+            // Add timeout and better error handling
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 second timeout for longer files
+            
+            fetch(`${API_BASE}/api/upload-midi`, {
+                method: 'POST',
+                body: formData,
+                signal: controller.signal
+            })
+            .then(response => {
+                clearTimeout(timeoutId);
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                return response.json();
+            })
+            .then(data => {
+                console.log('Upload response:', data);
+                
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+                
+                // Show generated audio with better UX
+                showGeneratedAudio(data);
+            })
+            .catch(error => {
+                clearTimeout(timeoutId);
+                console.error('Upload error:', error);
+                
+                // Show error message
+                document.getElementById('loading-audio').classList.add('hidden');
+                document.getElementById('generated-audio').classList.add('hidden');
+                document.getElementById('no-audio').classList.remove('hidden');
+                
+                // Update no-audio message to show error
+                const noAudioDiv = document.getElementById('no-audio');
+                noAudioDiv.innerHTML = `
+                    <svg class="w-12 h-12 mx-auto mb-4 opacity-50 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                    <p class="text-red-400">Upload failed: ${error.message}</p>
+                    <p class="text-sm text-gray-400 mt-2">Try uploading a different MIDI file</p>
+                `;
+            });
+        }
+        
+        function showGeneratedAudio(data) {
+            // Clear any old errors
+            document.getElementById('no-audio').classList.add('hidden');
+            
+            document.getElementById('loading-audio').classList.add('hidden');
+            document.getElementById('generated-audio').classList.remove('hidden');
+            
+            // Update audio info with enhanced formatting
+            const filename = data.original_filename || data.filename || 'Generated Audio';
+            const duration = data.duration ? data.duration.toFixed(2) : '2.00';
+            const quality = data.quality_level || data.quality || 'professional';
+            
+            document.getElementById('audio-filename').textContent = filename;
+            document.getElementById('audio-duration').textContent = `${duration}s`;
+            document.getElementById('audio-quality').textContent = quality;
+            document.getElementById('audio-format').textContent = data.format || 'WAV';
+            document.getElementById('audio-bitdepth').textContent = `${data.bit_depth}-bit`;
+            document.getElementById('audio-mastering').textContent = data.mastering_applied ? 'Applied' : 'None';
+            document.getElementById('audio-quality-level').textContent = data.sample_rate ? `${data.sample_rate / 1000}kHz ${data.bit_depth}-bit` : quality;
+            
+            // Store download URL - use output_file from server response
+            const outputFile = data.output_file || data.filename;
+            currentAudioFile = outputFile;
+            
+            // Extract filename from path for display
+            const displayName = outputFile.split('/').pop() || outputFile.split('\\').pop() || 'Generated Audio';
+            
+            const downloadUrl = `${API_BASE}/api/download/${outputFile}`;
+            
+            // Update audio player with actual audio - enable immediate playback
+            const audioPlayer = document.getElementById('audio-player');
+            if (audioPlayer) {
+                // Preload the audio for smooth playback
+                audioPlayer.preload = 'auto';
+                audioPlayer.src = downloadUrl;
+                
+                // Auto-play when ready for better UX
+                audioPlayer.addEventListener('canplaythrough', function() {
+                    console.log('Audio ready to play');
+                    // Optional: auto-play the audio
+                    // audioPlayer.play();
+                }, { once: true });
+            }
+            
+            // Update download button functionality
+            const downloadBtn = document.getElementById('download-btn');
+            if (downloadBtn) {
+                downloadBtn.onclick = function() {
+                    const link = document.createElement('a');
+                    link.href = downloadUrl;
+                    link.download = displayName;
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                };
+            }
+            
+            // Add visual feedback with animation
+            const generatedCard = document.getElementById('generated-audio');
+            generatedCard.style.animation = 'fadeInUp 0.5s ease-out';
+            
+            // Show success message with details
+            console.log('Audio generated successfully:', data);
+            
+            // Add copy to clipboard functionality
+            const copyButton = document.getElementById('copy-details');
+            if (copyButton) {
+                copyButton.onclick = () => {
+                    const details = `Generated Audio: ${filename}\nDuration: ${duration}s\nQuality: ${quality}\nFormat: ${data.format || 'WAV'}\nBit Depth: ${data.bit_depth}-bit\nMastering: ${data.mastering_applied ? 'Applied' : 'None'}`;
+                    navigator.clipboard.writeText(details).then(() => {
+                        // Show copy success feedback
+                        copyButton.innerHTML = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>';
+                        setTimeout(() => {
+                            copyButton.innerHTML = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>';
+                        }, 2000);
+                    });
+                };
+            }
+        }
+        
+        function updateModelStatus() {
+            // Model status is now static and displayed directly in HTML
+            // This function is kept for future enhancements
+        }
+        
+        function downloadAudio() {
+            if (!currentAudioFile) {
+                alert('No audio file to download');
+                return;
+            }
+            
+            const filename = currentAudioFile.split('/').pop();
+            const downloadUrl = `${API_BASE}/api/download/${filename}`;
+            
+            // Create temporary link and click it
+            const link = document.createElement('a');
+            link.href = downloadUrl;
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+        
+        function copyAudioInfo() {
+            const info = {
+                filename: document.getElementById('audio-filename').textContent,
+                duration: document.getElementById('audio-duration').textContent,
+                quality: document.getElementById('audio-quality').textContent,
+                format: document.getElementById('audio-format').textContent,
+                bitDepth: document.getElementById('audio-bitdepth').textContent,
+                mastering: document.getElementById('audio-mastering').textContent
+            };
+            
+            const text = `Generated Audio: ${info.filename}\nDuration: ${info.duration}\nQuality: ${info.quality}\nFormat: ${info.format}\nBit Depth: ${info.bitDepth}\nMastering: ${info.mastering}`;
+            
+            navigator.clipboard.writeText(text).then(() => {
+                alert('Audio info copied to clipboard!');
+            }).catch(() => {
+                alert('Failed to copy to clipboard');
+            });
+        }
+        
+        function handleModelUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            if (!file.name.toLowerCase().match(/\.(pkl|pickle|zip)$/)) {
+                alert('Please select a .pkl or .zip model file');
+                return;
+            }
+            
+            const formData = new FormData();
+            formData.append('file', file);
+            
+            // Show uploading status
+            const btn = document.getElementById('upload-model-btn');
+            const originalText = btn.textContent;
+            btn.textContent = 'Uploading...';
+            btn.disabled = true;
+            
+            fetch(`${API_BASE}/api/upload-model`, {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert(`Model uploaded successfully!\nFile: ${data.filename}\nSize: ${(data.size / 1024).toFixed(1)} KB`);
+                    
+                    // Reload model list to show new model
+                    loadAvailableModels();
+                    
+                    // Update UI to show new model is active
+                    setTimeout(() => {
+                        modelSelector.value = data.filename;
+                        updateModelInfo(data.filename);
+                    }, 500);
+                } else {
+                    alert('Model upload failed: ' + data.error);
+                }
+            })
+            .catch(error => {
+                console.error('Model upload error:', error);
+                alert('Model upload failed: ' + error.message);
+            })
+            .finally(() => {
+                btn.textContent = originalText;
+                btn.disabled = false;
+                event.target.value = ''; // Reset file input
+            });
+        }
+        
+        function updateModelInfo(modelName) {
+            // Update model info display
+            document.getElementById('model-type').textContent = 'Custom Model';
+            // Additional info would be fetched from server
+        }
+    </script>
+</body>
+</html>

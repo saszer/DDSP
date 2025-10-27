@@ -1,0 +1,37 @@
+# DDSP Neural Cello - Simplified Dependencies for Testing
+# embracingearth.space - Premium AI Audio Synthesis
+
+# Core Audio Processing (without TensorFlow for now)
+numpy==1.24.3
+scipy==1.11.1
+librosa==0.10.1
+soundfile==0.12.1
+
+# MIDI Processing
+mido==1.3.0
+pretty_midi==0.2.10
+
+# Web Framework
+fastapi==0.103.1
+uvicorn[standard]==0.23.2
+python-multipart==0.0.6
+aiofiles==23.2.1
+
+# Audio Effects & Processing
+pydub==0.25.1
+
+# Utilities
+pydantic==2.3.0
+python-dotenv==1.0.0
+loguru==0.7.0
+
+# Development & Testing
+pytest==7.4.0
+pytest-asyncio==0.21.1
+black==23.7.0
+flake8==6.0.0
+
+
+
+
+
