@@ -81,8 +81,6 @@ temp_audio/
 logs/
 *.log
 
-# Docker
-.dockerignore
 
 # Jupyter Notebooks
 .ipynb_checkpoints
