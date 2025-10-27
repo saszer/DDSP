@@ -69,42 +69,126 @@ class SampleBasedDDSP:
                                 release_percent: float, tone: str) -> np.ndarray:
         """Synthesize using config-based model (new format) - embracingearth.space"""
         
-        # Get frequency from note map
-        freq_hz = librosa.midi_to_hz(pitch)  # Default to librosa conversion
+        logger.info(f"[SYNTH DEBUG] Starting synthesis: pitch={pitch}, duration={duration}, velocity={velocity}, release={release_percent}%, tone={tone}")
         
-        # Generate samples for duration
-        n_samples = int(duration * self.sample_rate)
-        t = np.linspace(0, duration, n_samples)
+        # Frequency from MIDI (fallback if no explicit map for pitch)
+        freq_hz = librosa.midi_to_hz(pitch)
+        logger.info(f"[SYNTH DEBUG] Frequency: {freq_hz:.2f} Hz")
         
-        # Generate cello-like sound with harmonics
-        audio = np.zeros(n_samples)
+        # Duration and time vector
+        n_samples = int(max(1, round(duration * self.sample_rate)))
+        t = np.arange(n_samples) / float(self.sample_rate)
+        logger.info(f"[SYNTH DEBUG] Generating {n_samples} samples ({duration:.2f}s at {self.sample_rate}Hz)")
         
-        # Fundamental frequency
-        audio += 0.5 * np.sin(2 * np.pi * freq_hz * t)
+        # Determine harmonic count from trained config
+        trained_config = getattr(self, 'config', {}) or {}
+        n_harmonics = int(trained_config.get('n_harmonics', 60))
+        logger.info(f"[SYNTH DEBUG] Using {n_harmonics} harmonics")
         
-        # Add harmonics for cello character
-        harmonics = [2, 3, 4, 5]
-        amplitudes = [0.3, 0.2, 0.1, 0.05]
-        for harmonic, amp in zip(harmonics, amplitudes):
-            audio += amp * np.sin(2 * np.pi * freq_hz * harmonic * t)
+        # Map velocity to dynamic and fetch trained harmonic profile
+        dynamic = self._velocity_to_dynamic(velocity)
+        logger.info(f"[SYNTH DEBUG] Velocity {velocity} -> dynamic '{dynamic}'")
         
-        # Apply envelope based on release_percent
-        attack_time = 0.01
-        decay_time = 0.1
-        sustain_level = 0.7
-        release_time = (release_percent / 100.0) * 0.5  # Adjust release based on slider
+        harmonic_profile = None
+        if hasattr(self, 'dynamic_profile') and isinstance(self.dynamic_profile, dict):
+            logger.info(f"[SYNTH DEBUG] dynamic_profile type: {type(self.dynamic_profile)}, keys: {list(self.dynamic_profile.keys())}")
+            harmonic_profile = self.dynamic_profile.get(dynamic)
+            logger.info(f"[SYNTH DEBUG] Harmonic profile for '{dynamic}': {harmonic_profile is not None}")
+            if harmonic_profile is not None:
+                logger.info(f"[SYNTH DEBUG] Harmonic profile shape: {np.asarray(harmonic_profile).shape}, first few values: {np.asarray(harmonic_profile)[:5]}")
         
-        envelope = self._generate_envelope(n_samples, self.sample_rate, 
-                                          attack_time, decay_time, sustain_level, release_time)
-        audio *= envelope
+        if harmonic_profile is None:
+            logger.warning(f"[SYNTH DEBUG] No harmonic profile found, using fallback")
+            # Fallback: gentle roll-off
+            harmonic_profile = np.linspace(1.0, 0.1, n_harmonics)
+        else:
+            # Ensure correct length
+            harmonic_profile = np.asarray(harmonic_profile)
+            if len(harmonic_profile) < n_harmonics:
+                pad_len = n_harmonics - len(harmonic_profile)
+                harmonic_profile = np.pad(harmonic_profile, (0, pad_len), mode='edge')
+            elif len(harmonic_profile) > n_harmonics:
+                harmonic_profile = harmonic_profile[:n_harmonics]
         
-        # Apply velocity scaling
+        # Optional spectral envelope weighting per harmonic
+        spectral_weight = np.ones(n_harmonics)
+        spectral_envelope = getattr(self, 'spectral_envelope', None)
+        logger.info(f"[SYNTH DEBUG] spectral_envelope available: {spectral_envelope is not None}")
+        if spectral_envelope is not None:
+            try:
+                spectral_envelope = np.asarray(spectral_envelope)
+                logger.info(f"[SYNTH DEBUG] spectral_envelope shape: {spectral_envelope.shape}")
+                n_fft = int(trained_config.get('n_fft', 2048))
+                # Estimate bin per harmonic and sample envelope
+                freqs = np.linspace(0, self.sample_rate / 2.0, n_fft // 2 + 1)
+                weights = []
+                for h in range(1, n_harmonics + 1):
+                    fhz = freq_hz * h
+                    if fhz >= freqs[-1]:
+                        weights.append(0.0)
+                    else:
+                        idx = int(np.argmin(np.abs(freqs - fhz)))
+                        weights.append(float(spectral_envelope[min(idx, len(spectral_envelope) - 1)]))
+                weights = np.asarray(weights)
+                # Normalize weights to max 1 to avoid huge boosts
+                if np.max(weights) > 0:
+                    spectral_weight = weights / np.max(weights)
+                logger.info(f"[SYNTH DEBUG] Applied spectral envelope, weight range: [{np.min(spectral_weight):.3f}, {np.max(spectral_weight):.3f}]")
+            except Exception as e:
+                logger.error(f"[SYNTH DEBUG] Error applying spectral envelope: {e}")
+                # If anything goes wrong, keep flat weighting
+                spectral_weight = np.ones(n_harmonics)
+        
+        # Sum harmonics using trained amplitudes with pitch-dependent natural roll-off
+        audio = np.zeros(n_samples, dtype=np.float32)
+        active_harmonics = 0
+        for h in range(1, n_harmonics + 1):
+            amp = float(harmonic_profile[h - 1]) * float(spectral_weight[h - 1])
+            fhz = freq_hz * h
+            
+            # Apply natural pitch-dependent roll-off (higher pitches have fewer strong harmonics)
+            pitch_rolloff = 1.0 / (1.0 + (fhz / 1000.0) ** 1.5)  # Gentle roll-off above 1kHz
+            amp *= pitch_rolloff
+            
+            if fhz < self.sample_rate / 2.0 and amp > 1e-6:
+                audio += amp * np.sin(2 * np.pi * fhz * t).astype(np.float32)
+                active_harmonics += 1
+        
+        logger.info(f"[SYNTH DEBUG] Generated audio with {active_harmonics} active harmonics, RMS: {np.sqrt(np.mean(audio**2)):.6f}")
+        
+        # Apply tone EQ (pre-envelope) if requested
+        if tone != 'standard':
+            audio = self._apply_tone_eq(audio, tone)
+        
+        # ADSR envelope with release controlled by slider
+        attack_time = 0.02
+        decay_time = 0.08
+        sustain_level = 0.8
+        release_time = max(0.05, (release_percent / 100.0) * 0.6)
+        logger.info(f"[SYNTH DEBUG] Envelope: attack={attack_time}s, decay={decay_time}s, sustain={sustain_level}, release={release_time}s")
+        env = self._generate_envelope(n_samples, self.sample_rate, attack_time, decay_time, sustain_level, release_time)
+        audio *= env.astype(audio.dtype)
+        
+        # Velocity scaling (match trainer's perceptual curve)
         velocity_scale = (velocity / 127.0) ** 0.5
+        logger.info(f"[SYNTH DEBUG] Velocity scale: {velocity_scale:.3f}")
         audio *= velocity_scale
         
-        # Normalize
-        if np.max(np.abs(audio)) > 0:
-            audio = audio / np.max(np.abs(audio)) * 0.8
+        # Preserve trained model's natural amplitude ratios - don't over-normalize
+        # The model was trained to produce realistic amplitudes, so trust it
+        peak = float(np.max(np.abs(audio))) if audio.size else 0.0
+        logger.info(f"[SYNTH DEBUG] Peak before scaling: {peak:.6f}")
+        if peak > 0:
+            # Only normalize if significantly over unity (clipping risk)
+            if peak > 1.2:
+                audio = (audio / peak) * 0.95
+                logger.info(f"[SYNTH DEBUG] Normalized to prevent clipping")
+            elif peak < 0.1:
+                # Boost very quiet signals
+                audio = audio * (0.3 / peak)
+                logger.info(f"[SYNTH DEBUG] Boosted quiet signal")
+        
+        logger.info(f"[SYNTH DEBUG] Final audio: {len(audio)} samples, RMS: {np.sqrt(np.mean(audio**2)):.6f}, peak: {np.max(np.abs(audio)):.6f}")
         
         return audio
     
@@ -210,6 +294,23 @@ class SampleBasedDDSP:
         
         return sample
     
+    def _velocity_to_dynamic(self, velocity: int) -> str:
+        """Convert MIDI velocity to dynamic level consistent with training."""
+        if velocity <= 20:
+            return 'pp'
+        elif velocity <= 40:
+            return 'p'
+        elif velocity <= 64:
+            return 'mp'
+        elif velocity <= 96:
+            return 'mf'
+        elif velocity <= 112:
+            return 'f'
+        elif velocity <= 124:
+            return 'ff'
+        else:
+            return 'fff'
+    
     def _apply_tone_eq(self, audio: np.ndarray, tone: str) -> np.ndarray:
         """Apply tone-based EQ for different cello timbres"""
         from scipy import signal
@@ -240,10 +341,12 @@ class SampleBasedDDSP:
         if not self.is_loaded:
             raise ValueError("No samples loaded!")
         
+        logger.info(f"[MIDI SYNTH] Processing {len(midi_notes)} notes, duration={duration:.2f}s, release={release_percent}%, tone={tone}")
+        
         total_samples = int(duration * self.sample_rate)
         output = np.zeros(total_samples)
         
-        for note_info in midi_notes:
+        for idx, note_info in enumerate(midi_notes):
             pitch = note_info['pitch']
             velocity = note_info['velocity']
             start_time = note_info['start']
@@ -253,8 +356,11 @@ class SampleBasedDDSP:
             if note_duration <= 0:
                 continue
             
+            logger.info(f"[MIDI SYNTH] Note {idx+1}/{len(midi_notes)}: pitch={pitch}, velocity={velocity}, start={start_time:.3f}s, duration={note_duration:.3f}s")
+            
             # Generate note using real sample with tone and release
             note_audio = self.synthesize_note(pitch, note_duration, velocity, release_percent, tone)
+            logger.info(f"[MIDI SYNTH] Generated audio for note {idx+1}: {len(note_audio)} samples, peak={np.max(np.abs(note_audio)):.6f}")
             
             # Place in output
             start_sample = int(start_time * self.sample_rate)
@@ -295,7 +401,7 @@ class SampleBasedDDSP:
                 self.sample_rate = data.get('sample_rate', self.sample_rate)
                 self.is_loaded = len(self.samples_library) > 0
             elif 'config' in data:
-                # New format: config-based model (frequency maps and profiles)
+                # New format: config-based model (frequency mapping)
                 logger.info("Loading config-based model (frequency mapping)")
                 # Store the model data for synthesis
                 self.config = data.get('config', {})

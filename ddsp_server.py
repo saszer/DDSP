@@ -318,17 +318,28 @@ class DDSPModelManager:
         self.training_status = {"status": "idle", "progress": 0.0}
         self.audio_processor = ProfessionalAudioProcessor(Config.AUDIO_QUALITY_LEVEL)
         
-        # Load trained DDSP model if available
+        # Load trained DDSP model if available - Try Google DDSP first
         self.ddsp_model = None
         self.last_synthesis_mode = "UNKNOWN"
         if DDSP_MODEL_AVAILABLE:
             try:
-                model_path = Path("models/cello_ddsp_model.pkl")
-                if model_path.exists():
-                    self.ddsp_model = DDSPModelWrapper(model_path)
+                # Try Google DDSP model first
+                google_model_path = Path("models/cello_google_ddsp_model.pkl")
+                if google_model_path.exists():
+                    self.ddsp_model = DDSPModelWrapper(google_model_path)
                     self.ddsp_model.load()
                     self.is_trained = True
-                    print(f"[INFO] Loaded trained DDSP model from {model_path}")
+                    print(f"[INFO] ✅ Loaded Google DDSP model from {google_model_path}")
+                    self.last_synthesis_mode = "GOOGLE_DDSP"
+                else:
+                    # Fallback to custom model
+                    model_path = Path("models/cello_ddsp_model.pkl")
+                    if model_path.exists():
+                        self.ddsp_model = DDSPModelWrapper(model_path)
+                        self.ddsp_model.load()
+                        self.is_trained = True
+                        print(f"[INFO] Loaded custom DDSP model from {model_path}")
+                        self.last_synthesis_mode = "CUSTOM_DDSP"
             except Exception as e:
                 print(f"[WARNING] Failed to load DDSP model: {e}")
     

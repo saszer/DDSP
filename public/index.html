@@ -295,7 +295,7 @@
                     <div class="mb-4">
                         <label class="block text-sm font-medium mb-2">Active Model</label>
                         <select id="model-selector" class="w-full p-3 bg-gray-800 border border-gray-600 rounded-lg text-white">
-                            <option value="default">Default Sample-Based Model (1,276 samples)</option>
+                            <option value="cello_ddsp_model">Trained DDSP Model [ACTIVE]</option>
                         </select>
                     </div>
                     
@@ -312,22 +312,22 @@
                     </div>
                     
                     <!-- Model Info -->
-                    <div id="model-info" class="p-3 bg-blue-900/20 rounded-lg border border-blue-500/30 text-sm">
+                    <div id="model-info" class="p-3 bg-green-900/20 rounded-lg border border-green-500/30 text-sm">
                         <div class="mb-2">
                             <span class="text-gray-400">Model Type:</span>
-                            <span id="model-type" class="ml-2 text-green-400">Sample-Based Cello</span>
+                            <span id="model-type" class="ml-2 text-green-400">Trained DDSP Model</span>
                         </div>
                         <div class="mb-2">
-                            <span class="text-gray-400">Samples:</span>
-                            <span id="samples-count" class="ml-2 text-blue-400">1,276 trained cello recordings</span>
+                            <span class="text-gray-400">Training:</span>
+                            <span id="samples-count" class="ml-2 text-blue-400">Google DDSP on 1,276 cello samples</span>
                         </div>
                         <div class="mb-2">
-                            <span class="text-gray-400">Range:</span>
-                            <span id="pitch-range" class="ml-2 text-purple-400">40 MIDI pitches (C2-C6)</span>
+                            <span class="text-gray-400">Synthesis:</span>
+                            <span id="pitch-range" class="ml-2 text-purple-400">Learned frequency maps & spectral profiles</span>
                         </div>
                         <div class="mt-3 pt-3 border-t border-gray-700">
                             <p class="text-xs text-gray-500">
-                                <strong>How it works:</strong> Uses real cello recordings with pitch shifting and dynamic envelopes for natural sound.
+                                <strong>How it works:</strong> Uses trained harmonic profiles, dynamic mappings, and spectral envelopes learned from real cello recordings for authentic cello timbre.
                             </p>
                         </div>
                     </div>
