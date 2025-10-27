@@ -781,14 +781,38 @@ class DDSPHandler(BaseHTTPRequestHandler):
             self.end_headers()
             
             try:
-                available_models = model_manager.ddsp_model.list_available_models()
+                # Check if ddsp_model exists and has the method
+                if model_manager.ddsp_model and hasattr(model_manager.ddsp_model, 'list_available_models'):
+                    available_models = model_manager.ddsp_model.list_available_models()
+                    current_model = getattr(model_manager.ddsp_model, 'current_model_name', 'default')
+                else:
+                    # Fallback: list models directly from file system
+                    available_models = []
+                    models_dir = Path("models")
+                    if models_dir.exists():
+                        for model_file in models_dir.glob("*.pkl"):
+                            try:
+                                size = model_file.stat().st_size
+                                available_models.append({
+                                    "name": model_file.name,
+                                    "path": str(model_file),
+                                    "size": size,
+                                    "is_loaded": False
+                                })
+                            except Exception as e:
+                                print(f"Error reading model file {model_file}: {e}")
+                                continue
+                    current_model = "default"
+                
                 response = {
                     "success": True,
                     "models": available_models,
-                    "current_model": model_manager.ddsp_model.current_model_name
+                    "current_model": current_model
                 }
             except Exception as e:
                 print(f"[ERROR] Failed to list models: {e}")
+                import traceback
+                traceback.print_exc()
                 response = {
                     "success": False,
                     "error": str(e),
@@ -800,49 +824,75 @@ class DDSPHandler(BaseHTTPRequestHandler):
         
         elif self.path.startswith('/api/models/switch/'):
             """Switch to a different model"""
-            self.send_response(200)
-            self.send_header('Content-type', 'application/json')
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            
             try:
                 # Extract model name from path
                 model_name = self.path.replace('/api/models/switch/', '').replace('%20', ' ')
                 
-                # Switch model
-                success = model_manager.ddsp_model.switch_model(model_name)
+                # Check if ddsp_model exists and has the method
+                if model_manager.ddsp_model and hasattr(model_manager.ddsp_model, 'switch_model'):
+                    success = model_manager.ddsp_model.switch_model(model_name)
+                else:
+                    print(f"[ERROR] ddsp_model not available for switching")
+                    success = False
                 
                 response = {
                     "success": success,
                     "model_name": model_name,
                     "message": "Model switched successfully" if success else "Failed to switch model"
                 }
+                
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps(response).encode())
             except Exception as e:
                 print(f"[ERROR] Failed to switch model: {e}")
+                import traceback
+                traceback.print_exc()
                 response = {
                     "success": False,
                     "error": str(e)
                 }
-            
-            self.wfile.write(json.dumps(response).encode())
+                
+                self.send_response(500)
+                self.send_header('Content-type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps(response).encode())
         
         elif self.path == '/api/upload-model':
             """Upload custom trained model"""
-            self.send_response(200)
-            self.send_header('Content-type', 'application/json')
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            
             try:
                 # Parse multipart form data
-                content_length = int(self.headers['Content-Length'])
+                content_length = int(self.headers.get('Content-Length', 0))
+                
+                if content_length == 0:
+                    self.send_response(400)
+                    self.send_header('Content-type', 'application/json')
+                    self.send_header('Access-Control-Allow-Origin', '*')
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"success": False, "error": "No data received"}).encode())
+                    return
+                
                 post_data = self.rfile.read(content_length)
                 
-                # Extract model file from multipart data
-                filename = "uploaded_model.pkl"
-                model_data = post_data
+                # Find boundary (starts with --)
+                boundary_start = post_data.find(b'--')
+                if boundary_start == -1:
+                    self.send_response(400)
+                    self.send_header('Content-type', 'application/json')
+                    self.send_header('Access-Control-Allow-Origin', '*')
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"success": False, "error": "Invalid multipart data"}).encode())
+                    return
                 
-                # Try to extract filename
+                # Extract boundary
+                boundary_end = post_data.find(b'\r\n', boundary_start)
+                boundary = post_data[boundary_start:boundary_end]
+                
+                # Find filename in multipart data
+                filename = "uploaded_model.pkl"
                 if b'filename=' in post_data:
                     try:
                         filename_start = post_data.find(b'filename="') + 10
@@ -852,12 +902,31 @@ class DDSPHandler(BaseHTTPRequestHandler):
                     except:
                         filename = "uploaded_model.pkl"
                 
-                # Extract model data
-                if b'\r\n\r\n' in post_data:
-                    data_start = post_data.find(b'\r\n\r\n') + 4
-                    boundary_end = post_data.rfind(b'\r\n--')
-                    if boundary_end > data_start:
-                        model_data = post_data[data_start:boundary_end]
+                # Extract file data (between boundaries)
+                first_boundary = post_data.find(boundary)
+                if first_boundary != -1:
+                    # Find content start (after first boundary's headers)
+                    content_start = post_data.find(b'\r\n\r\n', first_boundary)
+                    if content_start != -1:
+                        content_start += 4  # Skip \r\n\r\n
+                        # Find end boundary
+                        end_boundary = post_data.find(boundary, content_start)
+                        if end_boundary != -1:
+                            content_end = post_data.rfind(b'\r\n', first_boundary, end_boundary)
+                            if content_end == -1:
+                                content_end = end_boundary
+                        else:
+                            content_end = len(post_data)
+                        
+                        model_data = post_data[content_start:content_end]
+                        
+                        # Trim trailing boundary markers
+                        if model_data.endswith(b'\r\n'):
+                            model_data = model_data[:-2]
+                    else:
+                        model_data = post_data
+                else:
+                    model_data = post_data
                 
                 print(f"[INFO] Uploading model: {filename}, size: {len(model_data)} bytes")
                 
@@ -877,14 +946,28 @@ class DDSPHandler(BaseHTTPRequestHandler):
                     "path": str(model_path),
                     "size": len(model_data)
                 }
+                
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps(response).encode())
+                
             except Exception as e:
                 print(f"[ERROR] Model upload failed: {e}")
+                import traceback
+                traceback.print_exc()
+                
                 response = {
                     "success": False,
                     "error": str(e)
                 }
-            
-            self.wfile.write(json.dumps(response).encode())
+                
+                self.send_response(500)
+                self.send_header('Content-type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps(response).encode())
         
         elif self.path.startswith('/api/download/'):
             # Extract the file path from URL (handles both "output/filename" and just "filename")
