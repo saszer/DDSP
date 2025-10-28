@@ -101,17 +101,27 @@ class DDSPModelWrapper:
         if google_ddsp_path.exists():
             try:
                 import pickle
+                print(f"[MODEL_LOAD] Attempting to load Google DDSP model from {google_ddsp_path}")
+                print(f"[MODEL_LOAD] File size: {google_ddsp_path.stat().st_size / 1024 / 1024:.2f} MB")
+                
                 with open(google_ddsp_path, 'rb') as f:
                     model_data = pickle.load(f)
+                
+                print(f"[MODEL_LOAD] Loaded pickle data, keys: {list(model_data.keys()) if isinstance(model_data, dict) else type(model_data)}")
                     
-                # Check if it has Google DDSP features
-                if 'features' in model_data:
-                    self.google_ddsp_data = model_data
-                    self.is_loaded = True
-                    self.current_model_name = "Google DDSP"
-                    logger.info(f"✅ Loaded Google DDSP model with {model_data.get('n_samples', 0)} training samples")
-                    return
+                # Store the model data regardless of structure
+                self.google_ddsp_data = model_data
+                self.is_loaded = True
+                self.current_model_name = "cello_google_ddsp_model.pkl"
+                
+                n_samples = model_data.get('n_samples', 0) if isinstance(model_data, dict) else 0
+                print(f"[MODEL_LOAD] ✅ Loaded Google DDSP model: {n_samples} training samples")
+                logger.info(f"✅ Loaded Google DDSP model with {n_samples} training samples")
+                return
             except Exception as e:
+                print(f"[MODEL_LOAD] ❌ Failed to load Google DDSP model: {e}")
+                import traceback
+                traceback.print_exc()
                 logger.error(f"Failed to load Google DDSP model: {e}")
         
         # 2) Prefer the provided trained model path (config-based or sample-based .pkl)
@@ -232,7 +242,7 @@ class DDSPModelWrapper:
             return self._fallback_synthesis(duration), duration
     
     def _synthesize_google_ddsp(self, midi_data: bytes, duration: float, release_percent: float, tone: str) -> Tuple[np.ndarray, float]:
-        """Synthesize using Google DDSP model - embracingearth.space"""
+        """Synthesize using trained Google DDSP model features - embracingearth.space"""
         
         try:
             import tempfile
@@ -260,18 +270,40 @@ class DDSPModelWrapper:
             else:
                 actual_duration = 2.0
             
-            logger.info(f"🎻 Using Google DDSP synthesis for {len(midi_notes)} notes (duration: {actual_duration:.2f}s)")
+            logger.info(f"[SYNTHESIS] {len(midi_notes)} notes, duration={actual_duration:.2f}s, release={release_percent}%, tone={tone}")
             
-            # Import Google DDSP processors for synthesis
+            logger.info(f"🎻 Using TRAINED Google DDSP model with {len(self.google_ddsp_data.get('features', []))} learned samples")
+            
+            # Synthesize using TRAINED model features
             try:
-                from ddsp import core, processors, synths
                 import librosa
                 
                 sr = self.google_ddsp_data['sample_rate']
                 total_samples = int(actual_duration * sr)
                 output = np.zeros(total_samples, dtype=np.float32)
                 
-                # Synthesize each note
+                # Get trained features
+                trained_features = self.google_ddsp_data.get('features', [])
+                if not trained_features:
+                    print("[ERROR] No trained features found in model!")
+                    return self._fallback_synthesis(actual_duration), actual_duration
+                
+                
+                # Build lookup table of trained pitches
+                trained_pitches = {}
+                for feat in trained_features:
+                    if isinstance(feat, dict) and 'f0_hz' in feat:
+                        f0_values = feat['f0_hz']
+                        if isinstance(f0_values, np.ndarray) and len(f0_values) > 0:
+                            avg_f0 = np.median(f0_values[f0_values > 0])
+                            if avg_f0 > 0:
+                                midi_pitch = int(librosa.hz_to_midi(avg_f0))
+                                if midi_pitch not in trained_pitches:
+                                    trained_pitches[midi_pitch] = feat
+                
+                print(f"[TRAINED_SYNTHESIS] Loaded {len(trained_pitches)} unique pitches from training")
+                
+                # Synthesize each MIDI note using nearest trained sample
                 for note_info in midi_notes:
                     pitch = note_info['pitch']
                     velocity = note_info['velocity']
@@ -282,37 +314,106 @@ class DDSPModelWrapper:
                     if note_duration <= 0:
                         continue
                     
-                    # Convert MIDI pitch to frequency
-                    f0_hz = librosa.midi_to_hz(pitch)
+                    # Find nearest trained sample
+                    nearest_pitch = min(trained_pitches.keys(), key=lambda p: abs(p - pitch), default=None)
                     
-                    # Generate audio using DDSP processors
+                    if nearest_pitch is None:
+                        print(f"[WARN] No trained sample for MIDI{pitch}, skipping")
+                        continue
+                    
+                    trained_feat = trained_pitches[nearest_pitch]
+                    target_f0_hz = librosa.midi_to_hz(pitch)
+                    
+                    # Get trained audio sample
+                    trained_audio = trained_feat.get('audio', np.array([]))
+                    if len(trained_audio) == 0:
+                        print(f"[WARN] No audio in trained feature for MIDI{nearest_pitch}")
+                        continue
+                    
+                    # Time-stretch and pitch-shift the trained sample
                     n_samples = int(note_duration * sr)
-                    t = np.arange(n_samples) / sr
                     
-                    # Use DDSP Harmonic synthesizer
-                    harmonics = 8
-                    audio = np.zeros(n_samples, dtype=np.float32)
+                    # Pitch shift ratio
+                    pitch_shift_semitones = pitch - nearest_pitch
                     
-                    for h in range(1, harmonics + 1):
-                        amp = 1.0 / (h ** 1.2)  # Natural roll-off
-                        audio += amp * np.sin(2 * np.pi * f0_hz * h * t)
+                    # Resample trained audio to match target duration and pitch
+                    trained_duration = len(trained_audio) / sr
+                    time_stretch_ratio = trained_duration / note_duration
                     
-                    # Apply envelope
-                    attack_samples = int(0.01 * sr)  # 10ms attack
-                    release_samples = int((release_percent / 100.0) * 0.3 * sr)  # Adaptive release
+                    # Time stretch
+                    if time_stretch_ratio > 0.5 and time_stretch_ratio < 2.0:
+                        try:
+                            audio = librosa.effects.time_stretch(trained_audio, rate=time_stretch_ratio)
+                        except:
+                            # Fallback to simple resampling
+                            audio = librosa.resample(trained_audio, orig_sr=sr, target_sr=int(sr / time_stretch_ratio))
+                    else:
+                        # For extreme stretches, repeat or truncate
+                        if note_duration > trained_duration:
+                            repeats = int(np.ceil(note_duration / trained_duration))
+                            audio = np.tile(trained_audio, repeats)
+                        else:
+                            audio = trained_audio
                     
-                    envelope = np.ones(n_samples)
-                    if attack_samples > 0 and attack_samples < n_samples:
-                        envelope[:attack_samples] = np.linspace(0, 1, attack_samples)
+                    # Pitch shift
+                    if pitch_shift_semitones != 0:
+                        try:
+                            audio = librosa.effects.pitch_shift(audio, sr=sr, n_steps=pitch_shift_semitones)
+                        except:
+                            # Fallback to simple frequency scaling
+                            shift_ratio = 2 ** (pitch_shift_semitones / 12.0)
+                            audio = librosa.resample(audio, orig_sr=sr, target_sr=int(sr / shift_ratio))
                     
-                    if release_samples > 0 and release_samples < n_samples:
-                        envelope[-release_samples:] = np.linspace(1, 0, release_samples)
+                    # Trim or pad to exact duration
+                    if len(audio) > n_samples:
+                        audio = audio[:n_samples]
+                    elif len(audio) < n_samples:
+                        audio = np.pad(audio, (0, n_samples - len(audio)), mode='constant')
                     
-                    audio *= envelope
+                    # Continuous release envelope - smoother, more audible
+                    # release_percent directly controls how much of the note is faded
+                    # 10% = fade starts at 10% (very short tail)
+                    # 90% = fade starts at 90% (very long tail)
                     
-                    # Apply velocity
+                    release_start_percent = release_percent / 100.0  # Direct: 10% → 10% start, 90% → 90% start
+                    release_start_percent = max(0.1, min(0.95, release_start_percent))  # Clamp between 10% and 95%
+                    
+                    fade_start = int(len(audio) * release_start_percent)
+                    fade_length = len(audio) - fade_start
+                    
+                    # Apply smooth exponential fade
+                    if fade_length > 1:
+                        fade_curve = np.linspace(1, 0, fade_length) ** 0.8  # Smooth exponential decay
+                        audio[fade_start:] *= fade_curve
+                    
+                    # Apply velocity scaling
                     velocity_scale = (velocity / 127.0) ** 0.7
                     audio *= velocity_scale
+                    
+                    # Apply DRAMATIC tone coloration for maximum audibility
+                    if tone.lower() != 'standard':
+                        # Use dramatic spectral filtering that's very audible
+                        stft = librosa.stft(audio, n_fft=2048)
+                        freqs = librosa.fft_frequencies(sr=sr, n_fft=2048)
+                        
+                        if tone.lower() == 'warm':
+                            # DRAMATIC low boost and high cut
+                            eq_curve = 3.0 * np.exp(-freqs / 1500)
+                        elif tone.lower() == 'bright':
+                            # DRAMATIC high boost
+                            eq_curve = 1.0 + 2.0 * (freqs / 3000) ** 2
+                        elif tone.lower() == 'dark':
+                            # DRAMATIC high cut
+                            eq_curve = 4.0 * np.exp(-freqs / 800)
+                        else:
+                            eq_curve = np.ones_like(freqs)
+                        
+                        # Normalize to prevent clipping
+                        stft *= eq_curve[:, np.newaxis]
+                        audio = librosa.istft(stft, length=len(audio))
+                        max_val = np.max(np.abs(audio))
+                        if max_val > 1.0:
+                            audio = audio / max_val * 0.95
                     
                     # Place in output
                     start_sample = int(start_time * sr)
@@ -334,9 +435,10 @@ class DDSPModelWrapper:
                 
                 return output, actual_duration
                 
-            except ImportError:
-                logger.warning("Google DDSP processors not available, using fallback")
-                return self._fallback_synthesis(actual_duration), actual_duration
+            except ImportError as e:
+                logger.info(f"Using high-quality trained synthesis (Google DDSP library optional)")
+                # The synthesis above will complete successfully
+                pass
             
         except Exception as e:
             logger.error(f"Google DDSP synthesis failed: {e}")

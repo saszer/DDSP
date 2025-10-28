@@ -329,6 +329,7 @@ class DDSPModelManager:
                     self.ddsp_model = DDSPModelWrapper(google_model_path)
                     self.ddsp_model.load()
                     self.is_trained = True
+                    self.current_model_name = google_model_path.name
                     print(f"[INFO] ✅ Loaded Google DDSP model from {google_model_path}")
                     self.last_synthesis_mode = "GOOGLE_DDSP"
                 else:
@@ -338,6 +339,7 @@ class DDSPModelManager:
                         self.ddsp_model = DDSPModelWrapper(model_path)
                         self.ddsp_model.load()
                         self.is_trained = True
+                        self.current_model_name = model_path.name
                         print(f"[INFO] Loaded custom DDSP model from {model_path}")
                         self.last_synthesis_mode = "CUSTOM_DDSP"
             except Exception as e:
@@ -474,8 +476,16 @@ class DDSPModelManager:
                     
                     print(f"[INFO] Trained synthesis OK, duration={actual_duration:.2f}s, samples={len(audio)}")
                     print(f"[INFO] Audio fill: {audio_fill_percentage:.1f}% (non-zero samples: {non_zero_samples}/{len(audio)})")
-                    
-                    synthesis_mode = "TRAINED_MODEL"
+
+                    # Guardrails: if trained output looks wrong, fall back to high-quality timeline
+                    expected_samples = int(actual_duration * Config.SAMPLE_RATE)
+                    too_short = len(audio) < int(0.8 * expected_samples)
+                    too_sparse = audio_fill_percentage < 5.0  # <5% non-zero indicates silence/issue
+                    if too_short or too_sparse:
+                        print(f"[WARN] Trained output failed validation (too_short={too_short}, too_sparse={too_sparse}). Falling back to HQ timeline.")
+                        audio = None
+                    else:
+                        synthesis_mode = "TRAINED_MODEL"
                 except Exception as e:
                     print(f"[WARNING] Trained synthesis failed: {e}")
                     import traceback
@@ -565,7 +575,12 @@ class DDSPModelManager:
                     # Generate high-quality cello synthesis for this note
                     note_length_samples = end_sample - start_sample
                     note_audio = self._generate_high_quality_cello_note(
-                        f0_hz, note['velocity'], note_length_samples, sr
+                        f0_hz,
+                        note['velocity'],
+                        note_length_samples,
+                        sr,
+                        release_percent,
+                        tone
                     )
                     
                     # Add to timeline
@@ -590,7 +605,9 @@ class DDSPModelManager:
             n_samples = int(duration * sr)
             f0_hz = 261.63  # C4
             velocity = 80
-            note_audio = self._generate_high_quality_cello_note(f0_hz, velocity, n_samples, sr)
+            note_audio = self._generate_high_quality_cello_note(
+                f0_hz, velocity, n_samples, sr, 100.0, 'standard'
+            )
             return {
                 'audio': note_audio,
                 'f0_hz': [f0_hz] * n_samples,
@@ -598,7 +615,8 @@ class DDSPModelManager:
                 'sample_rate': sr
             }, duration
     
-    def _generate_high_quality_cello_note(self, f0_hz: float, velocity: int, n_samples: int, sr: int) -> List[float]:
+    def _generate_high_quality_cello_note(self, f0_hz: float, velocity: int, n_samples: int, sr: int,
+                                          release_percent: float, tone: str) -> List[float]:
         """Generate high-quality cello note synthesis - embracingearth.space"""
         
         # Generate time axis
@@ -607,6 +625,17 @@ class DDSPModelManager:
         # Cello harmonic series with realistic amplitudes
         harmonics = [1, 2, 3, 4, 5, 6, 7, 8]
         amplitudes = [1.0, 0.8, 0.6, 0.4, 0.3, 0.2, 0.15, 0.1]
+
+        # Apply tone coloration by shaping harmonic amplitudes
+        tone_l = (tone or 'standard').lower()
+        if tone_l == 'warm':
+            amplitudes = [a * f for a, f in zip(amplitudes, [1.1, 1.0, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4])]
+        elif tone_l == 'bright':
+            amplitudes = [a * f for a, f in zip(amplitudes, [1.0, 1.0, 1.05, 1.1, 1.15, 1.15, 1.1, 1.05])]
+        elif tone_l == 'dark':
+            amplitudes = [a * f for a, f in zip(amplitudes, [1.2, 1.05, 0.85, 0.7, 0.55, 0.45, 0.35, 0.25])]
+        elif tone_l == 'vintage':
+            amplitudes = [a * f for a, f in zip(amplitudes, [1.0, 0.95, 0.9, 0.85, 0.8, 0.75, 0.7, 0.65])]
         
         # Generate harmonic content
         note_audio = [0.0] * n_samples
@@ -621,7 +650,8 @@ class DDSPModelManager:
         attack_time = 0.01  # 10ms attack
         decay_time = 0.1    # 100ms decay
         sustain_level = 0.7
-        release_time = 0.5  # 500ms release
+        # Scale release time based on release_percent (0% staccato, 100% very long), amplified x11 for audibility
+        release_time = max(0.05, min(3.0, ((release_percent / 100.0) * 0.9 + 0.1) * 11))
         
         envelope = self._generate_cello_envelope(n_samples, sr, attack_time, decay_time, sustain_level, release_time)
         
@@ -752,14 +782,18 @@ class DDSPHandler(BaseHTTPRequestHandler):
             # List available trained models
             available_models = []
             model_dir = Path("models")
+            current_model_name = getattr(model_manager.ddsp_model, 'current_model_name', None) if model_manager.ddsp_model else None
+            
             if model_dir.exists():
-                for model_file in model_dir.glob("*.pkl"):
+                for model_file in sorted(model_dir.glob("*.pkl"), key=lambda x: x.stat().st_size, reverse=True):
                     try:
+                        is_loaded = (model_file.name == current_model_name) and model_manager.ddsp_model and model_manager.ddsp_model.is_loaded
                         available_models.append({
-                            "name": model_file.stem,
+                            "name": model_file.name,  # Full filename with .pkl
                             "path": str(model_file),
                             "size": model_file.stat().st_size,
-                            "is_loaded": model_file.name == "cello_ddsp_model.pkl" and model_manager.ddsp_model and model_manager.ddsp_model.is_loaded
+                            "is_loaded": is_loaded,
+                            "is_trained": True
                         })
                     except Exception as e:
                         print(f"Error reading model file {model_file}: {e}")
@@ -771,9 +805,10 @@ class DDSPHandler(BaseHTTPRequestHandler):
                 "version": "1.0.0",
                 "ddsp_available": ddsp_available,
                 "tensorflow_available": False,
-                "synthesis_mode": "Enhanced Custom Synthesis" if not ddsp_available else "Google DDSP Ready",
+                "synthesis_mode": f"Google DDSP ({current_model_name})" if current_model_name and 'google' in current_model_name.lower() else "Enhanced Custom Synthesis",
                 "available_models": available_models,
-                "current_model": "cello_ddsp_model" if (model_manager.ddsp_model and model_manager.ddsp_model.is_loaded) else None
+                "current_model": current_model_name,
+                "current_model_name": current_model_name  # Add for frontend compatibility
             }
             self.wfile.write(json.dumps(response).encode())
         
@@ -1058,16 +1093,31 @@ class DDSPHandler(BaseHTTPRequestHandler):
                     except:
                         filename = "uploaded_file.mid"
                 
-                # Extract MIDI data (skip multipart headers)
-                if b'\r\n\r\n' in post_data:
-                    midi_start = post_data.find(b'\r\n\r\n') + 4
-                    # Find the end boundary
-                    boundary_end = post_data.rfind(b'\r\n--')
-                    if boundary_end > midi_start:
-                        midi_data = post_data[midi_start:boundary_end]
+                # Extract MIDI data properly from multipart
+                # Find the Content-Disposition for the file field
+                midi_data = b''
+                if b'Content-Disposition: form-data; name="file"' in post_data:
+                    # Find the file part
+                    file_part_start = post_data.find(b'Content-Disposition: form-data; name="file"')
+                    # Find the actual data start (after headers)
+                    data_start = post_data.find(b'\r\n\r\n', file_part_start) + 4
+                    # Find the next boundary
+                    next_boundary = post_data.find(b'\r\n--', data_start)
+                    if next_boundary > data_start:
+                        midi_data = post_data[data_start:next_boundary]
                 
-                print(f"Processing uploaded MIDI file: {filename}")
-                print(f"MIDI data size: {len(midi_data)} bytes")
+                # Validate MIDI header
+                if not midi_data.startswith(b'MThd'):
+                    print(f"[ERROR] Invalid MIDI data - first bytes: {midi_data[:20].hex() if len(midi_data) >= 20 else midi_data.hex()}")
+                    # Fallback: try old method
+                    if b'\r\n\r\n' in post_data:
+                        midi_start = post_data.find(b'\r\n\r\n') + 4
+                        boundary_end = post_data.rfind(b'\r\n--')
+                        if boundary_end > midi_start:
+                            midi_data = post_data[midi_start:boundary_end]
+                
+                print(f"[MIDI_UPLOAD] Processing: {filename}")
+                print(f"[MIDI_UPLOAD] Size: {len(midi_data)} bytes, Valid header: {midi_data.startswith(b'MThd')}")
                 
                 # Extract synthesis parameters from multipart data
                 release_percent = 100.0  # default
@@ -1075,6 +1125,8 @@ class DDSPHandler(BaseHTTPRequestHandler):
                 sample_rate = Config.SAMPLE_RATE  # default
                 bit_depth = Config.EXPORT_BIT_DEPTH  # default
                 apply_mastering = Config.APPLY_MASTERING  # default
+                
+                print(f"[PARAM_PARSE] Starting parameter extraction from multipart data")
                 
                 # Parse multipart form data parameters
                 # Search for each parameter in the multipart boundary
@@ -1088,7 +1140,7 @@ class DDSPHandler(BaseHTTPRequestHandler):
                             if value_start > 3 and value_end > value_start:
                                 release_str = post_data[value_start:value_end].decode('utf-8')
                                 release_percent = float(release_str)
-                                print(f"[PARAM] Release parameter: {release_percent}%")
+                                print(f"[PARAM] ✅ Release parameter: {release_percent}%")
                     
                     # Look for tone=XXX pattern
                     if b'name="tone"' in post_data:
@@ -1098,7 +1150,7 @@ class DDSPHandler(BaseHTTPRequestHandler):
                             value_end = post_data.find(b'\r\n', value_start)
                             if value_start > 3 and value_end > value_start:
                                 tone = post_data[value_start:value_end].decode('utf-8')
-                                print(f"[PARAM] Tone parameter: {tone}")
+                                print(f"[PARAM] ✅ Tone parameter: {tone}")
                     
                     # Look for sample_rate=XXX pattern
                     if b'name="sample_rate"' in post_data:

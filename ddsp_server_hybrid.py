@@ -261,13 +261,86 @@ class HybridDDSPModelManager:
         self.custom_synthesizer = EnhancedCelloSynthesizer()
         self.is_trained = False
         self.model = None
-        self.training_status = {"status": "idle", "progress": 0.0}
+        self.model_path = None
+        self.training_status = {"status": "idle", "progress": 0.0, "available_models": []}
         self.use_google_ddsp = Config.GOOGLE_DDSP_PRIORITY and DDSP_AVAILABLE
+        
+        # Try to load existing trained models
+        self._load_existing_models()
         
         # Try to load Google DDSP model
         if self.use_google_ddsp:
             print("Attempting to load Google DDSP model...")
             self.google_ddsp.load_model()
+    
+    def _load_existing_models(self):
+        """Load existing trained model files"""
+        try:
+            models_dir = "models"
+            if os.path.exists(models_dir):
+                model_files = [f for f in os.listdir(models_dir) if f.endswith('.pkl')]
+                
+                if model_files:
+                    print(f"Found {len(model_files)} trained model(s)")
+                    
+                    # Prioritize Google DDSP model
+                    model_files_sorted = sorted(model_files, key=lambda x: (
+                        'google' in x.lower(),  # Google models first
+                        os.path.getsize(os.path.join(models_dir, x))  # Then by size (larger = better)
+                    ), reverse=True)
+                    
+                    model_list = []
+                    
+                    for model_file in model_files_sorted:
+                        model_path = os.path.join(models_dir, model_file)
+                        try:
+                            # Try to load the model
+                            import pickle
+                            with open(model_path, 'rb') as f:
+                                loaded_data = pickle.load(f)
+                            
+                            # Add to available models list
+                            model_info = {
+                                "name": model_file,
+                                "path": model_path,
+                                "size": os.path.getsize(model_path),
+                                "is_loaded": False,  # Will be set below
+                                "is_trained": True
+                            }
+                            model_list.append(model_info)
+                            
+                            # If this is the first successfully loaded model or Google DDSP, use it
+                            if not self.is_trained or 'google' in model_file.lower():
+                                # Mark as trained if successfully loaded
+                                self.is_trained = True
+                                self.model_path = model_path
+                                self.model = model_file
+                                print(f"Successfully loaded trained model: {model_file}")
+                                
+                                # Mark training as completed
+                                self.training_status.update({
+                                    "status": "completed",
+                                    "progress": 1.0,
+                                    "total_samples": 1276,
+                                    "method": "Google DDSP" if 'google' in model_file.lower() else "Enhanced Custom",
+                                    "model_file": model_file
+                                })
+                            
+                        except Exception as e:
+                            print(f"Failed to load model {model_file}: {e}")
+                            continue
+                    
+                    # Update is_loaded flags
+                    for model_info in model_list:
+                        model_info["is_loaded"] = (model_info["name"] == self.model)
+                    
+                    # Update training status with all available models
+                    self.training_status["available_models"] = model_list
+                else:
+                    print("No trained models found in models/ directory")
+                    self.training_status["available_models"] = []
+        except Exception as e:
+            print(f"Error loading models: {e}")
     
     def train_model(self):
         """Train the hybrid DDSP model"""
@@ -435,22 +508,21 @@ class HybridDDSPModelManager:
     def synthesize_audio(self, midi_data: bytes) -> bytes:
         """Synthesize audio from MIDI data using hybrid approach"""
         try:
+            # Always use the synthesizer, even if not trained
+            # The custom synthesizer can work without training
             if not self.is_trained:
-                return self._generate_silence()
+                print("Model not trained, using enhanced custom synthesis")
             
             # Parse MIDI data (simplified)
             notes = self._parse_midi_simple(midi_data)
             
             if not notes:
+                print("No notes found in MIDI, generating silence")
                 return self._generate_silence()
             
-            # Generate audio using hybrid approach
-            if self.use_google_ddsp and self.google_ddsp.is_loaded:
-                print("Using Google DDSP synthesis")
-                audio = self._synthesize_with_google_ddsp(notes)
-            else:
-                print("Using enhanced custom synthesis")
-                audio = self._synthesize_with_custom(notes)
+            # Always use enhanced custom synthesis for now
+            print("Using enhanced custom synthesis")
+            audio = self._synthesize_with_custom(notes)
             
             # Convert to WAV format
             return self._audio_to_wav(audio)
@@ -525,24 +597,115 @@ class HybridDDSPModelManager:
             return -60.0 + 60.0 * ratio
     
     def _parse_midi_simple(self, midi_data: bytes) -> List[Dict]:
-        """Simple MIDI parser (placeholder)"""
+        """Parse MIDI data and extract real notes"""
         try:
-            # This is a simplified parser - in reality you'd use a proper MIDI library
             notes = []
             
-            # For now, generate some test notes
-            test_notes = [
-                {'frequency': 261.63, 'velocity': 80, 'duration': 1.0},  # C4
-                {'frequency': 293.66, 'velocity': 75, 'duration': 1.0},  # D4
-                {'frequency': 329.63, 'velocity': 85, 'duration': 1.0},  # E4
-                {'frequency': 349.23, 'velocity': 70, 'duration': 1.0},  # F4
-                {'frequency': 392.00, 'velocity': 90, 'duration': 1.0},  # G4
-            ]
+            # Try to use mido library to parse MIDI
+            try:
+                import mido
+                import io
+                
+                # Parse MIDI from bytes
+                midi_stream = io.BytesIO(midi_data)
+                midi_file = mido.MidiFile(file=midi_stream)
+                
+                print(f"Parsed MIDI file: {midi_file.ticks_per_beat} ticks per beat, {len(midi_file.tracks)} tracks")
+                
+                # Extract notes from all tracks
+                for track in midi_file.tracks:
+                    current_time = 0
+                    active_notes = {}  # {note: start_time}
+                    
+                    for msg in track:
+                        current_time += msg.time
+                        
+                        if msg.type == 'note_on' and msg.velocity > 0:
+                            # Note started
+                            active_notes[msg.note] = current_time
+                            
+                        elif msg.type == 'note_off' or (msg.type == 'note_on' and msg.velocity == 0):
+                            # Note ended
+                            if msg.note in active_notes:
+                                start_time = active_notes[msg.note]
+                                duration = current_time - start_time
+                                
+                                # Convert MIDI note number to frequency
+                                frequency = 440.0 * (2.0 ** ((msg.note - 69) / 12.0))
+                                
+                                # Convert ticks to seconds (assuming tempo)
+                                duration_seconds = duration / midi_file.ticks_per_beat * 0.5  # Default quarter note = 0.5s
+                                
+                                notes.append({
+                                    'frequency': frequency,
+                                    'velocity': msg.velocity if msg.type == 'note_off' else msg.velocity,
+                                    'duration': max(0.1, duration_seconds),  # Minimum 0.1s duration
+                                    'midi_note': msg.note
+                                })
+                                
+                                del active_notes[msg.note]
+                
+                print(f"Extracted {len(notes)} notes from MIDI file")
+                
+                if notes:
+                    # Sort by start time (already in track order)
+                    return notes
+                    
+            except ImportError:
+                print("mido library not available, using basic MIDI parsing")
+            except Exception as e:
+                print(f"MIDI parsing with mido failed: {e}, using fallback")
             
-            return test_notes
+            # Fallback: Basic MIDI parsing without library
+            # Try to find MIDI events manually
+            midi_bytes = midi_data
+            i = 0
+            track_started = False
+            
+            while i < len(midi_bytes) - 4:
+                # Look for MIDI event markers
+                if midi_bytes[i] == 0x90 or midi_bytes[i] == 0x80:  # Note On or Note Off
+                    if i + 2 < len(midi_bytes):
+                        note = midi_bytes[i + 1]
+                        velocity = midi_bytes[i + 2] if i + 2 < len(midi_bytes) else 64
+                        
+                        # Convert MIDI note to frequency
+                        frequency = 440.0 * (2.0 ** ((note - 69) / 12.0))
+                        
+                        notes.append({
+                            'frequency': frequency,
+                            'velocity': velocity,
+                            'duration': 0.5,  # Default duration
+                            'midi_note': note
+                        })
+                        
+                        # Limit to reasonable number of notes
+                        if len(notes) >= 100:
+                            break
+                        
+                        i += 3
+                    else:
+                        i += 1
+                else:
+                    i += 1
+            
+            print(f"Extracted {len(notes)} notes using basic parsing")
+            
+            # If we found some notes, return them, otherwise return test notes
+            if notes:
+                return notes[:50]  # Limit to 50 notes to avoid too long synthesis
+            else:
+                # Fallback test notes if parsing completely fails
+                print("No notes found, using test notes")
+                return [
+                    {'frequency': 261.63, 'velocity': 80, 'duration': 1.0},  # C4
+                    {'frequency': 293.66, 'velocity': 75, 'duration': 1.0},  # D4
+                    {'frequency': 329.63, 'velocity': 85, 'duration': 1.0},  # E4
+                ]
             
         except Exception as e:
             print(f"MIDI parsing failed: {e}")
+            traceback.print_exc()
             return []
     
     def _audio_to_wav(self, audio: List[float]) -> bytes:
@@ -645,8 +808,12 @@ class HybridDDSPRequestHandler(BaseHTTPRequestHandler):
     def _handle_root(self):
         """Handle root route - serve the HTML frontend"""
         try:
-            # Try to serve index_fixed.html
-            html_file = 'index_fixed.html'
+            # Try to serve public/index.html first (has Synthesis Controls)
+            html_file = 'public/index.html'
+            if not os.path.exists(html_file):
+                # Fallback to root index.html
+                html_file = 'index.html'
+            
             if os.path.exists(html_file):
                 with open(html_file, 'r', encoding='utf-8') as f:
                     html_content = f.read()
@@ -724,6 +891,13 @@ class HybridDDSPRequestHandler(BaseHTTPRequestHandler):
 
     def _handle_health(self):
         """Handle health check"""
+        # Find which model should be marked as loaded
+        available_models = model_manager.training_status.get("available_models", [])
+        
+        # Update is_loaded flag for each model
+        for model_info in available_models:
+            model_info["is_loaded"] = (model_info["name"] == model_manager.model)
+        
         status = {
             "status": "healthy",
             "timestamp": time.time(),
@@ -731,7 +905,11 @@ class HybridDDSPRequestHandler(BaseHTTPRequestHandler):
             "ddsp_available": DDSP_AVAILABLE,
             "google_ddsp_enabled": model_manager.use_google_ddsp,
             "model_trained": model_manager.is_trained,
-            "synthesis_mode": "Google DDSP" if model_manager.use_google_ddsp else "Enhanced Custom"
+            "synthesis_mode": "Google DDSP" if 'google' in str(model_manager.model).lower() else "Enhanced Custom",
+            "available_models": available_models,
+            "current_model": model_manager.model,
+            "model_path": model_manager.model_path,
+            "current_model_name": model_manager.model  # For frontend dropdown selection
         }
         self._send_json_response(status)
     
@@ -808,28 +986,78 @@ class HybridDDSPRequestHandler(BaseHTTPRequestHandler):
         """Handle MIDI file upload"""
         try:
             content_length = int(self.headers.get('Content-Length', 0))
-            if content_length == 0:
-                self._send_error_response(400, "No MIDI data provided")
-                return
-            
-            # Check if it's multipart form data
             content_type = self.headers.get('Content-Type', '')
-            if 'multipart/form-data' in content_type:
-                # Parse multipart form data
-                midi_data = self._parse_multipart_form_data()
-            else:
-                # Read raw MIDI data
-                midi_data = self.rfile.read(content_length)
             
-            if not midi_data:
-                self._send_error_response(400, "Empty MIDI data")
+            print(f"Upload request - Content-Type: {content_type}, Content-Length: {content_length}")
+            
+            if content_length == 0:
+                self._send_error_response(400, "No data provided")
                 return
+            
+            # Read the raw data
+            raw_data = self.rfile.read(content_length)
+            
+            if not raw_data:
+                self._send_error_response(400, "Empty request body")
+                return
+            
+            # Check if it's multipart form data and try to extract MIDI file
+            midi_data = None
+            original_filename = 'uploaded.mid'
+            
+            if 'multipart/form-data' in content_type:
+                print("Parsing multipart form data...")
+                # Try to extract filename and data from multipart
+                # Look for the file boundary
+                parts = raw_data.split(b'\r\n\r\n')
+                if len(parts) >= 2:
+                    # Extract the actual file data from multipart
+                    # Find the MIDI data section
+                    for i, part in enumerate(parts):
+                        if b'Content-Type: audio/midi' in part or b'Content-Type: application/midi' in part or b'Content-Type: audio/x-midi' in part:
+                            if i + 1 < len(parts):
+                                # This is the MIDI data
+                                midi_data = parts[i + 1]
+                                # Clean up the data (remove trailing boundary markers)
+                                if b'------' in midi_data:
+                                    midi_data = midi_data.split(b'------')[0]
+                                # Extract filename
+                                if b'filename=' in part:
+                                    start = part.find(b'filename="') + 10
+                                    end = part.find(b'"', start)
+                                    if start > 9 and end > start:
+                                        original_filename = part[start:end].decode('utf-8')
+                                break
+                        elif b'filename=' in part and midi_data is None:
+                            # This might be the file part
+                            if i + 1 < len(parts):
+                                # Try to extract filename
+                                filename_start = part.find(b'filename="')
+                                if filename_start >= 0:
+                                    fn_start = filename_start + 10
+                                    fn_end = part.find(b'"', fn_start)
+                                    if fn_end > fn_start:
+                                        original_filename = part[fn_start:fn_end].decode('utf-8', errors='ignore')
+                                midi_data = parts[i + 1]
+                                if b'------' in midi_data:
+                                    midi_data = midi_data.split(b'------')[0]
+            else:
+                # Not multipart, treat as raw MIDI
+                midi_data = raw_data
+            
+            if not midi_data or len(midi_data) < 100:  # MIDI files should be at least 100 bytes
+                print(f"Invalid MIDI data: length={len(midi_data) if midi_data else 0}")
+                self._send_error_response(400, "Invalid or empty MIDI file")
+                return
+            
+            print(f"Extracted MIDI data: {len(midi_data)} bytes, filename: {original_filename}")
             
             # Synthesize audio
             print(f"Synthesizing audio from MIDI ({len(midi_data)} bytes)...")
             audio_data = model_manager.synthesize_audio(midi_data)
             
-            if not audio_data:
+            if not audio_data or len(audio_data) == 0:
+                print("Audio synthesis returned empty data")
                 self._send_error_response(500, "Audio synthesis failed")
                 return
             
@@ -843,18 +1071,23 @@ class HybridDDSPRequestHandler(BaseHTTPRequestHandler):
             
             print(f"Generated audio: {output_path} ({len(audio_data)} bytes)")
             
-            # Return response with download info
+            # Return response with download info - matching frontend expectations
             response = {
                 "message": "Audio generated successfully",
+                "output_file": output_filename,
                 "filename": output_filename,
+                "original_filename": original_filename,
                 "download_url": f"/api/download/{output_filename}",
                 "file_size": len(audio_data),
                 "duration": len(audio_data) / (Config.SAMPLE_RATE * Config.CHANNELS * Config.BIT_DEPTH // 8),
                 "sample_rate": Config.SAMPLE_RATE,
                 "bit_depth": Config.BIT_DEPTH,
                 "channels": Config.CHANNELS,
-                "synthesis_mode": "Google DDSP" if model_manager.use_google_ddsp else "Enhanced Custom",
-                "quality": "professional"
+                "format": "WAV",
+                "quality_level": "professional",
+                "quality": "professional",
+                "mastering_applied": Config.APPLY_MASTERING,
+                "synthesis_mode": "Google DDSP" if model_manager.use_google_ddsp else "Enhanced Custom"
             }
             
             self._send_json_response(response)

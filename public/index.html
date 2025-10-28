@@ -295,7 +295,7 @@
                     <div class="mb-4">
                         <label class="block text-sm font-medium mb-2">Active Model</label>
                         <select id="model-selector" class="w-full p-3 bg-gray-800 border border-gray-600 rounded-lg text-white">
-                            <option value="cello_ddsp_model">Trained DDSP Model [ACTIVE]</option>
+                            <option value="">Loading models...</option>
                         </select>
                     </div>
                     
@@ -340,87 +340,114 @@
         // DDSP Neural Cello - Frontend JavaScript
         // embracingearth.space - Premium AI Audio Synthesis
         
-        const API_BASE = 'https://ddsp.fly.dev';
+        const API_BASE = 'http://localhost:8000';
         
         // Load available models on page load
         function loadAvailableModels() {
-            fetch(`${API_BASE}/api/models`)
+            console.log('[loadAvailableModels] Fetching models from', `${API_BASE}/health`);
+            fetch(`${API_BASE}/health`)
                 .then(response => response.json())
                 .then(data => {
+                    console.log('[loadAvailableModels] Received data:', data);
                     const modelSelector = document.getElementById('model-selector');
-                    modelSelector.innerHTML = '';
-                    
-                    // Add default option
-                    const defaultOption = document.createElement('option');
-                    defaultOption.value = 'default';
-                    defaultOption.textContent = 'Default Sample-Based Model (1,276 samples) [LOADED]';
-                    modelSelector.appendChild(defaultOption);
-                    
-                    if (data.models && data.models.length > 0) {
-                        data.models.forEach(model => {
-                            const option = document.createElement('option');
-                            option.value = model.name;
-                            option.textContent = `${model.name} (${(model.size / 1024).toFixed(1)} KB)`;
-                            if (model.is_loaded) {
-                                option.textContent += ' [ACTIVE]';
-                            }
-                            modelSelector.appendChild(option);
-                        });
+                    if (!modelSelector) {
+                        console.error('[loadAvailableModels] model-selector element not found!');
+                        return;
                     }
                     
-                    // Select current model if available
-                    if (data.current_model) {
-                        modelSelector.value = data.current_model;
+                    modelSelector.innerHTML = '';
+                    
+                    // Add available models
+                    if (data.available_models && data.available_models.length > 0) {
+                        console.log('[loadAvailableModels] Found', data.available_models.length, 'models');
+                        data.available_models.forEach(model => {
+                            const option = document.createElement('option');
+                            option.value = model.name;
+                            
+                            // Format display text with size
+                            let displayText = model.name;
+                            if (model.size) {
+                                const sizeMB = (model.size / 1024 / 1024).toFixed(1);
+                                if (sizeMB >= 1) {
+                                    displayText += ` (${sizeMB} MB)`;
+                                } else {
+                                    const sizeKB = (model.size / 1024).toFixed(1);
+                                    displayText += ` (${sizeKB} KB)`;
+                                }
+                            }
+                            
+                            if (model.is_loaded) {
+                                displayText += ' [LOADED]';
+                            }
+                            
+                            option.textContent = displayText;
+                            
+                            // Prioritize Google DDSP model
+                            if ('google' in model.name.toLowerCase()) {
+                                modelSelector.insertBefore(option, modelSelector.firstChild);
+                            } else {
+                                modelSelector.appendChild(option);
+                            }
+                        });
+                        
+                        // Select the loaded model or Google DDSP model
+                        const targetModel = data.current_model_name || data.current_model;
+                        console.log('[loadAvailableModels] Setting target model to:', targetModel);
+                        
+                        if (targetModel) {
+                            modelSelector.value = targetModel;
+                        } else {
+                            // Find Google DDSP model
+                            const googleModel = data.available_models.find(m => 'google' in m.name.toLowerCase());
+                            if (googleModel) {
+                                modelSelector.value = googleModel.name;
+                            }
+                        }
+                        
+                        console.log('[loadAvailableModels] Final selection:', modelSelector.value);
+                    } else {
+                        // No models available
+                        console.log('[loadAvailableModels] No models in response');
+                        const option = document.createElement('option');
+                        option.value = '';
+                        option.textContent = 'No models available';
+                        modelSelector.appendChild(option);
                     }
                 })
                 .catch(error => {
-                    console.error('Failed to load models:', error);
+                    console.error('[loadAvailableModels] Fetch failed:', error);
                     const modelSelector = document.getElementById('model-selector');
-                    modelSelector.innerHTML = '<option value="default">Default Model [LOADED]</option>';
+                    if (modelSelector) {
+                        modelSelector.innerHTML = '<option value="">Error loading models</option>';
+                    }
                 });
         }
         
         function handleModelChange(event) {
             const modelName = event.target.value;
-            if (modelName === 'default') {
-                // Already using default model
+            if (!modelName) {
                 return;
             }
             
-            // Switch to selected model
-            console.log(`Switching to model: ${modelName}`);
+            // Just update the current model selection
+            console.log(`Selected model: ${modelName}`);
+            currentModel = modelName;
             
-            fetch(`${API_BASE}/api/models/switch/${modelName}`)
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success) {
-                        alert(`Successfully switched to model: ${modelName}`);
-                        // Update UI to show current model
-                        updateModelInfo(modelName);
-                    } else {
-                        alert(`Failed to switch model: ${data.message || data.error}`);
-                        // Revert selection
-                        event.target.value = 'default';
-                    }
-                })
-                .catch(error => {
-                    console.error('Model switch error:', error);
-                    alert('Failed to switch model');
-                    event.target.value = 'default';
-                });
+            // Reload models to update the UI
+            loadAvailableModels();
         }
         
-        // Load models when page loads
-        loadAvailableModels();
         let selectedQuality = 'professional';
         let currentAudioFile = null;
         let currentMIDIFile = null;
+        let currentModel = null;
         
         // Initialize
         document.addEventListener('DOMContentLoaded', function() {
             initializeEventListeners();
             updateTrainingStatus();
             updateModelStatus(); // Add model status check
+            loadAvailableModels(); // Load models after DOM is ready
         });
         
         function initializeEventListeners() {
@@ -589,14 +616,20 @@
             const bitDepth = document.getElementById('bit-depth-select').value;
             const mastering = document.getElementById('mastering-checkbox').checked;
             
+            // Get selected model
+            const selectedModel = document.getElementById('model-selector').value;
+            
             // Add parameters to form data with correct name format
             formData.append('release_percent', releasePercent);
             formData.append('tone', tone);
             formData.append('sample_rate', sampleRate);
             formData.append('bit_depth', bitDepth);
             formData.append('apply_mastering', mastering ? 'true' : 'false');
+            if (selectedModel) {
+                formData.append('model', selectedModel);
+            }
             
-            console.log('Uploading with parameters:', { releasePercent, tone, sampleRate, bitDepth, mastering, filename: file.name });
+            console.log('Uploading with parameters:', { releasePercent, tone, sampleRate, bitDepth, mastering, model: selectedModel, filename: file.name });
             
             // Show loading with estimated time
             document.getElementById('loading-audio').classList.remove('hidden');
