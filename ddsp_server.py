@@ -1067,6 +1067,114 @@ class DDSPHandler(BaseHTTPRequestHandler):
             response = {"message": "Training started", "status": "initiated"}
             self.wfile.write(json.dumps(response).encode())
         
+        elif self.path == '/api/upload-model':
+            """Upload custom trained model - POST version"""
+            try:
+                # Parse multipart form data
+                content_length = int(self.headers.get('Content-Length', 0))
+                
+                if content_length == 0:
+                    self.send_response(400)
+                    self.send_header('Content-type', 'application/json')
+                    self.send_header('Access-Control-Allow-Origin', '*')
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"success": False, "error": "No data received"}).encode())
+                    return
+                
+                post_data = self.rfile.read(content_length)
+                
+                # Find boundary (starts with --)
+                boundary_start = post_data.find(b'--')
+                if boundary_start == -1:
+                    self.send_response(400)
+                    self.send_header('Content-type', 'application/json')
+                    self.send_header('Access-Control-Allow-Origin', '*')
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"success": False, "error": "Invalid multipart data"}).encode())
+                    return
+                
+                # Extract boundary
+                boundary_end = post_data.find(b'\r\n', boundary_start)
+                boundary = post_data[boundary_start:boundary_end]
+                
+                # Find filename in multipart data
+                filename = "uploaded_model.pkl"
+                if b'filename=' in post_data:
+                    try:
+                        filename_start = post_data.find(b'filename="') + 10
+                        filename_end = post_data.find(b'"', filename_start)
+                        if filename_start > 9 and filename_end > filename_start:
+                            filename = post_data[filename_start:filename_end].decode('utf-8')
+                    except:
+                        filename = "uploaded_model.pkl"
+                
+                # Extract file data (between boundaries)
+                first_boundary = post_data.find(boundary)
+                model_data = None
+                if first_boundary != -1:
+                    # Find content start (after first boundary's headers)
+                    content_start = post_data.find(b'\r\n\r\n', first_boundary)
+                    if content_start != -1:
+                        content_start += 4  # Skip \r\n\r\n
+                        # Find end boundary
+                        end_boundary = post_data.find(boundary, content_start)
+                        if end_boundary != -1:
+                            content_end = post_data.rfind(b'\r\n', first_boundary, end_boundary)
+                            if content_end == -1:
+                                content_end = end_boundary
+                        else:
+                            content_end = len(post_data)
+                        
+                        model_data = post_data[content_start:content_end]
+                        
+                        # Trim trailing boundary markers
+                        if model_data.endswith(b'\r\n'):
+                            model_data = model_data[:-2]
+                
+                if model_data is None or len(model_data) == 0:
+                    model_data = post_data
+                
+                print(f"[INFO] Uploading model: {filename}, size: {len(model_data)} bytes")
+                
+                # Save uploaded model
+                models_dir = Path(Config.MODEL_PATH)
+                models_dir.mkdir(exist_ok=True)
+                model_path = models_dir / filename
+                
+                with open(model_path, 'wb') as f:
+                    f.write(model_data)
+                
+                print(f"[INFO] Model saved to: {model_path}")
+                
+                response = {
+                    "success": True,
+                    "filename": filename,
+                    "path": str(model_path),
+                    "size": len(model_data)
+                }
+                
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps(response).encode())
+                
+            except Exception as e:
+                print(f"[ERROR] Model upload failed: {e}")
+                import traceback
+                traceback.print_exc()
+                
+                response = {
+                    "success": False,
+                    "error": str(e)
+                }
+                
+                self.send_response(500)
+                self.send_header('Content-type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps(response).encode())
+        
         elif self.path == '/api/upload-midi':
             self.send_response(200)
             self.send_header('Content-type', 'application/json')

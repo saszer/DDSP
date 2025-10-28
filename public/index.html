@@ -343,84 +343,79 @@
         const API_BASE = 'http://localhost:8000';
         
         // Load available models on page load
-        function loadAvailableModels() {
-            console.log('[loadAvailableModels] Fetching models from', `${API_BASE}/health`);
-            fetch(`${API_BASE}/health`)
-                .then(response => response.json())
-                .then(data => {
-                    console.log('[loadAvailableModels] Received data:', data);
-                    const modelSelector = document.getElementById('model-selector');
-                    if (!modelSelector) {
-                        console.error('[loadAvailableModels] model-selector element not found!');
-                        return;
-                    }
-                    
-                    modelSelector.innerHTML = '';
-                    
-                    // Add available models
-                    if (data.available_models && data.available_models.length > 0) {
-                        console.log('[loadAvailableModels] Found', data.available_models.length, 'models');
-                        data.available_models.forEach(model => {
-                            const option = document.createElement('option');
-                            option.value = model.name;
-                            
-                            // Format display text with size
-                            let displayText = model.name;
-                            if (model.size) {
-                                const sizeMB = (model.size / 1024 / 1024).toFixed(1);
-                                if (sizeMB >= 1) {
-                                    displayText += ` (${sizeMB} MB)`;
-                                } else {
-                                    const sizeKB = (model.size / 1024).toFixed(1);
-                                    displayText += ` (${sizeKB} KB)`;
-                                }
-                            }
-                            
-                            if (model.is_loaded) {
-                                displayText += ' [LOADED]';
-                            }
-                            
-                            option.textContent = displayText;
-                            
-                            // Prioritize Google DDSP model
-                            if ('google' in model.name.toLowerCase()) {
-                                modelSelector.insertBefore(option, modelSelector.firstChild);
+        async function loadAvailableModels() {
+            try {
+                console.log('[loadAvailableModels] Fetching models from', `${API_BASE}/health`);
+                const response = await fetch(`${API_BASE}/health`);
+                const data = await response.json();
+                console.log('[loadAvailableModels] Received data:', data);
+                
+                const modelSelector = document.getElementById('model-selector');
+                if (!modelSelector) {
+                    console.error('[loadAvailableModels] model-selector element not found!');
+                    return;
+                }
+                
+                // Clear existing options
+                modelSelector.innerHTML = '';
+                
+                // Add available models
+                if (data.available_models && data.available_models.length > 0) {
+                    console.log('[loadAvailableModels] Found', data.available_models.length, 'models');
+                    data.available_models.forEach(model => {
+                        const option = document.createElement('option');
+                        option.value = model.name;
+                        
+                        // Format display text with size
+                        let displayText = model.name;
+                        if (model.size) {
+                            const sizeMB = (model.size / 1024 / 1024).toFixed(1);
+                            if (sizeMB >= 1) {
+                                displayText += ` (${sizeMB} MB)`;
                             } else {
-                                modelSelector.appendChild(option);
-                            }
-                        });
-                        
-                        // Select the loaded model or Google DDSP model
-                        const targetModel = data.current_model_name || data.current_model;
-                        console.log('[loadAvailableModels] Setting target model to:', targetModel);
-                        
-                        if (targetModel) {
-                            modelSelector.value = targetModel;
-                        } else {
-                            // Find Google DDSP model
-                            const googleModel = data.available_models.find(m => 'google' in m.name.toLowerCase());
-                            if (googleModel) {
-                                modelSelector.value = googleModel.name;
+                                const sizeKB = (model.size / 1024).toFixed(1);
+                                displayText += ` (${sizeKB} KB)`;
                             }
                         }
                         
-                        console.log('[loadAvailableModels] Final selection:', modelSelector.value);
-                    } else {
-                        // No models available
-                        console.log('[loadAvailableModels] No models in response');
-                        const option = document.createElement('option');
-                        option.value = '';
-                        option.textContent = 'No models available';
+                        if (model.is_loaded) {
+                            displayText += ' [LOADED]';
+                        }
+                        
+                        option.textContent = displayText;
                         modelSelector.appendChild(option);
+                    });
+                    
+                    // Select the loaded model or Google DDSP model
+                    const targetModel = data.current_model_name || data.current_model;
+                    console.log('[loadAvailableModels] Setting target model to:', targetModel);
+                    
+                    if (targetModel) {
+                        modelSelector.value = targetModel;
+                    } else {
+                        // Find Google DDSP model
+                        const googleModel = data.available_models.find(m => 'google' in m.name.toLowerCase());
+                        if (googleModel) {
+                            modelSelector.value = googleModel.name;
+                        }
                     }
-                })
-                .catch(error => {
-                    console.error('[loadAvailableModels] Fetch failed:', error);
-                    const modelSelector = document.getElementById('model-selector');
-                    if (modelSelector) {
-                        modelSelector.innerHTML = '<option value="">Error loading models</option>';
-                    }
-                });
+                    
+                    console.log('[loadAvailableModels] Final selection:', modelSelector.value);
+                } else {
+                    // No models available
+                    console.log('[loadAvailableModels] No models in response');
+                    const option = document.createElement('option');
+                    option.value = '';
+                    option.textContent = 'No models available';
+                    modelSelector.appendChild(option);
+                }
+            } catch (error) {
+                console.error('[loadAvailableModels] Fetch failed:', error);
+                const modelSelector = document.getElementById('model-selector');
+                if (modelSelector) {
+                    modelSelector.innerHTML = '<option value="">Error loading models</option>';
+                }
+            }
         }
         
         function handleModelChange(event) {
@@ -765,6 +760,11 @@
                     });
                 };
             }
+        }
+        
+        function updateTrainingStatus() {
+            // Training status is now static and displayed directly in HTML
+            // This function is kept for future enhancements
         }
         
         function updateModelStatus() {
