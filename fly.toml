@@ -8,7 +8,7 @@ primary_region = "iad"
   builder = "paketobuildpacks/builder:base"
   
 [deploy]
-  release_command = "python -m pip install -r requirements.txt"
+  release_command = "python -m pip install -r requirements-simple.txt || pip install numpy librosa mido pretty_midi aiofiles pydantic"
   strategy = "immediate"
 
 [env]
