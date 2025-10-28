@@ -109,6 +109,9 @@ temp/
 *.tar.gz
 *.rar
 
+# Fly.io (keep deployment scripts, ignore local config)
+# .fly/
+
 # Audio processing temporary files
 /tmp/
 temp_midi.mid
