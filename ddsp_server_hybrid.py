@@ -56,6 +56,7 @@ class GoogleDDSPModel:
         self.model = None
         self.is_loaded = False
         self.model_path = None
+        self.google_ddsp_data = None  # Trained model parameters
         
     def load_model(self, model_path: str = None):
         """Load a pre-trained Google DDSP model"""
@@ -98,18 +99,18 @@ class GoogleDDSPModel:
             
             # Use enhanced synthesis with Google DDSP-trained parameters if available
             if self.google_ddsp_data:
-                print("[GOOGLE_DDSP.synthesize] ✅ Using trained Google DDSP model parameters")
+                print("[GOOGLE_DDSP.synthesize] [OK] Using trained Google DDSP model parameters")
                 print(f"[GOOGLE_DDSP.synthesize] Model data type: {type(self.google_ddsp_data)}")
                 # Apply model-specific parameters from trained data
                 audio = self._synthesize_with_trained_parameters(f0_hz, loudness_db, sample_rate)
                 print(f"[GOOGLE_DDSP.synthesize] Generated {len(audio) if audio else 0} samples using trained model")
                 return audio
             else:
-                print("[GOOGLE_DDSP.synthesize] ⚠️ No model data, using fallback synthesis")
+                print("[GOOGLE_DDSP.synthesize] [WARN] No model data, using fallback synthesis")
                 return self._fallback_synthesis(f0_hz, loudness_db, sample_rate)
             
         except Exception as e:
-            print(f"[GOOGLE_DDSP.synthesize] ❌ Google DDSP synthesis failed: {e}")
+            print(f"[GOOGLE_DDSP.synthesize] [ERROR] Google DDSP synthesis failed: {e}")
             import traceback
             traceback.print_exc()
             return None
@@ -212,7 +213,7 @@ class GoogleDDSPModel:
                         sample = 0.7 * np.sin(2 * np.pi * current_f0 * t)
                         output_samples.append(float(sample))
                 
-                print(f"[GOOGLE_DDSP] ✅ Synthesized {len(output_samples)} samples using trained features")
+                print(f"[GOOGLE_DDSP] [OK] Synthesized {len(output_samples)} samples using trained features")
                 return output_samples
                 
             except ImportError as e:
@@ -462,7 +463,18 @@ class HybridDDSPModelManager:
                                 # If it's a Google DDSP model, enable Google DDSP synthesis
                                 if 'google' in model_file.lower():
                                     self.use_google_ddsp = True
-                                    print(f"✅ Enabled Google DDSP synthesis mode (trained model loaded)")
+                                    print(f"[OK] Enabled Google DDSP synthesis mode (trained model loaded)")
+                                    
+                                    # Load the model data immediately
+                                    try:
+                                        import pickle
+                                        with open(model_path, 'rb') as f:
+                                            model_data = pickle.load(f)
+                                        self.google_ddsp.google_ddsp_data = model_data
+                                        num_features = len(model_data.get('features', []))
+                                        print(f"[OK] Loaded trained model data: {num_features} features")
+                                    except Exception as e:
+                                        print(f"Failed to pre-load model data: {e}")
                                 
                                 # Mark training as completed
                                 self.training_status.update({
@@ -474,7 +486,7 @@ class HybridDDSPModelManager:
                                 })
                             
                         except Exception as e:
-                            print(f"Failed to load model {model_file}: {e}")
+                            print(f"Failed to load model {model_file}: (check error logs)")
                             continue
                     
             # Update is_loaded flags
@@ -668,26 +680,26 @@ class HybridDDSPModelManager:
             if self.is_trained and self.model and self.model_path:
                 # Check if it's a Google DDSP model
                 if 'google' in str(self.model).lower():
-                    print(f"[SYNTHESIS] ✅ Using Google DDSP model: {self.model} from {self.model_path}")
+                    print(f"[SYNTHESIS] [OK] Using Google DDSP model: {self.model} from {self.model_path}")
                     # Load the actual model and use it
                     audio = self._synthesize_with_loaded_google_ddsp_model(notes)
                     if audio is None:
                         print("[SYNTHESIS] Loaded model returned None, trying Google DDSP wrapper")
                         audio = self._synthesize_with_google_ddsp(notes)
                     if audio is None:
-                        print("[SYNTHESIS] ❌ Google DDSP wrapper failed, falling back to custom")
+                        print("[SYNTHESIS] [ERROR] Google DDSP wrapper failed, falling back to custom")
                         audio = self._synthesize_with_custom(notes)
                     else:
-                        print(f"[SYNTHESIS] ✅ Google DDSP synthesis succeeded: {len(audio)} samples")
+                        print(f"[SYNTHESIS] [OK] Google DDSP synthesis succeeded: {len(audio)} samples")
                 else:
                     # Try to load and use the trained model
                     print(f"[SYNTHESIS] Attempting to use trained model: {self.model}")
                     audio = self._synthesize_with_trained_model(notes)
                     if audio is None:
-                        print("[SYNTHESIS] ❌ Trained model synthesis failed, falling back to custom")
+                        print("[SYNTHESIS] [ERROR] Trained model synthesis failed, falling back to custom")
                         audio = self._synthesize_with_custom(notes)
             else:
-                print("[SYNTHESIS] ⚠️ No trained model loaded, using enhanced custom synthesis")
+                print("[SYNTHESIS] [WARN] No trained model loaded, using enhanced custom synthesis")
                 audio = self._synthesize_with_custom(notes)
             
             # Convert to WAV format
@@ -772,7 +784,7 @@ class HybridDDSPModelManager:
                 # Use the trained model-based synthesis (with actual audio clips)
                 audio = self._synthesize_with_trained_audio_clips(notes)
                 if audio:
-                    print(f"[GOOGLE_DDSP] ✅ Successfully synthesized {len(audio)} samples using trained audio clips")
+                    print(f"[GOOGLE_DDSP] [OK] Successfully synthesized {len(audio)} samples using trained audio clips")
                     return audio
                 else:
                     print("[GOOGLE_DDSP] Trained audio clip synthesis returned None, falling back")
@@ -847,16 +859,25 @@ class HybridDDSPModelManager:
             
             print(f"[TRAINED_AUDIO] Loaded {len(trained_pitches)} unique pitches from training")
             
-            # Calculate total duration
-            max_end_time = max((note['start'] + note['duration'] for note in notes), default=2.0)
-            total_samples = int((max_end_time + 0.5) * sample_rate)
+            # Calculate total duration - check if notes have 'start' field
+            print(f"[TRAINED_AUDIO] Processing {len(notes)} notes:")
+            for i, note in enumerate(notes):
+                has_start = 'start' in note
+                print(f"  Note {i}: start={note.get('start', 'MISSING')}, duration={note.get('duration', 'MISSING')}, freq={note.get('frequency', 'MISSING')}")
+            
+            # Calculate max end time accounting for start times
+            max_end_time = max((note.get('start', 0) + note.get('duration', 0) for note in notes), default=2.0)
+            print(f"[TRAINED_AUDIO] Calculated max_end_time: {max_end_time:.2f}s")
+            # Add small padding (0.1s) for audio fade-out, not 0.5s
+            total_samples = int((max_end_time + 0.1) * sample_rate)
+            print(f"[TRAINED_AUDIO] Total output samples: {total_samples} = {total_samples/sample_rate:.2f}s")
             output = np.zeros(total_samples, dtype=np.float32)
             
             # Synthesize each note using trained audio clips
             for note_info in notes:
                 freq = note_info['frequency']
                 velocity = note_info['velocity']
-                start_time = note_info['start']
+                start_time = note_info.get('start', 0.0)  # Default to 0 if missing
                 duration = note_info['duration']
                 
                 if duration <= 0:
@@ -869,7 +890,7 @@ class HybridDDSPModelManager:
                 nearest_pitch = min(trained_pitches.keys(), key=lambda p: abs(p - midi_pitch))
                 pitch_diff = midi_pitch - nearest_pitch
                 
-                print(f"[TRAINED_AUDIO] Note: MIDI{midi_pitch} ({freq:.1f}Hz) → using trained MIDI{nearest_pitch} (shift {pitch_diff} semitones)")
+                print(f"[TRAINED_AUDIO] Note: MIDI{midi_pitch} ({freq:.1f}Hz) -> using trained MIDI{nearest_pitch} (shift {pitch_diff} semitones)")
                 
                 trained_feat = trained_pitches[nearest_pitch]
                 trained_audio = trained_feat['audio']
@@ -941,7 +962,7 @@ class HybridDDSPModelManager:
             if max_val > 1.0:
                 output = output / max_val * 0.95
             
-            print(f"[TRAINED_AUDIO] ✅ Generated {len(output)} samples using trained audio clips")
+            print(f"[TRAINED_AUDIO] [OK] Generated {len(output)} samples using trained audio clips")
             return output.tolist()
             
         except Exception as e:
@@ -970,7 +991,7 @@ class HybridDDSPModelManager:
                 # Enable/disable Google DDSP synthesis based on model type
                 if 'google' in model_name.lower():
                     self.use_google_ddsp = True
-                    print(f"✅ Enabled Google DDSP synthesis mode for {model_name}")
+                    print(f"[OK] Enabled Google DDSP synthesis mode for {model_name}")
                 else:
                     self.use_google_ddsp = False
                     print(f"Using custom synthesis mode for {model_name}")
@@ -1090,32 +1111,34 @@ class HybridDDSPModelManager:
                 
                 # Extract notes from all tracks
                 for track in midi_file.tracks:
-                    current_time = 0
-                    active_notes = {}  # {note: start_time}
+                    current_time_ticks = 0
+                    active_notes = {}  # {note: start_time_ticks}
                     
                     for msg in track:
-                        current_time += msg.time
+                        current_time_ticks += msg.time
                         
                         if msg.type == 'note_on' and msg.velocity > 0:
                             # Note started
-                            active_notes[msg.note] = current_time
+                            active_notes[msg.note] = current_time_ticks
                             
                         elif msg.type == 'note_off' or (msg.type == 'note_on' and msg.velocity == 0):
                             # Note ended
                             if msg.note in active_notes:
-                                start_time = active_notes[msg.note]
-                                duration = current_time - start_time
+                                start_ticks = active_notes[msg.note]
+                                duration_ticks = current_time_ticks - start_ticks
                                 
                                 # Convert MIDI note number to frequency
                                 frequency = 440.0 * (2.0 ** ((msg.note - 69) / 12.0))
                                 
-                                # Convert ticks to seconds (assuming tempo)
-                                duration_seconds = duration / midi_file.ticks_per_beat * 0.5  # Default quarter note = 0.5s
+                                # Convert ticks to seconds (assume 120 BPM => quarter = 0.5s)
+                                start_seconds = start_ticks / midi_file.ticks_per_beat * 0.5
+                                duration_seconds = duration_ticks / midi_file.ticks_per_beat * 0.5
                                 
                                 notes.append({
                                     'frequency': frequency,
                                     'velocity': msg.velocity if msg.type == 'note_off' else msg.velocity,
-                                    'duration': max(0.1, duration_seconds),  # Minimum 0.1s duration
+                                    'start': max(0.0, float(start_seconds)),
+                                    'duration': max(0.1, float(duration_seconds)),
                                     'midi_note': msg.note
                                 })
                                 
@@ -1137,6 +1160,7 @@ class HybridDDSPModelManager:
             midi_bytes = midi_data
             i = 0
             track_started = False
+            current_start_seconds = 0.0
             
             while i < len(midi_bytes) - 4:
                 # Look for MIDI event markers
@@ -1151,9 +1175,11 @@ class HybridDDSPModelManager:
                         notes.append({
                             'frequency': frequency,
                             'velocity': velocity,
+                            'start': float(current_start_seconds),
                             'duration': 0.5,  # Default duration
                             'midi_note': note
                         })
+                        current_start_seconds += 0.5
                         
                         # Limit to reasonable number of notes
                         if len(notes) >= 100:
@@ -1486,56 +1512,71 @@ class HybridDDSPRequestHandler(BaseHTTPRequestHandler):
             
             if 'multipart/form-data' in content_type:
                 print("Parsing multipart form data...")
-                # Try to extract filename and data from multipart
-                # Look for the file boundary
-                parts = raw_data.split(b'\r\n\r\n')
-                if len(parts) >= 2:
-                    # Extract the actual file data from multipart
-                    # Find the MIDI data section
-                    for i, part in enumerate(parts):
-                        # Extract model parameter
-                        if b'name="model"' in part:
-                            if i + 1 < len(parts):
-                                model_data = parts[i + 1]
-                                if b'------' in model_data:
-                                    model_data = model_data.split(b'------')[0]
-                                selected_model = model_data.decode('utf-8', errors='ignore').strip()
-                                print(f"Selected model from request: {selected_model}")
+                # Extract boundary from Content-Type
+                boundary = None
+                for item in content_type.split(';'):
+                    item = item.strip()
+                    if item.startswith('boundary='):
+                        boundary = item[9:].strip('"')
+                        break
+                
+                if boundary:
+                    print(f"Found boundary: {boundary[:20]}...")
+                    boundary_bytes = boundary.encode('utf-8')
+                    
+                    # Split by boundary
+                    parts = raw_data.split(b'--' + boundary_bytes)
+                    
+                    for part in parts:
+                        # Skip empty parts and end boundary
+                        if not part or part.strip() == b'--' or len(part.strip()) < 10:
+                            continue
                         
-                        # Extract MIDI file
-                        if b'Content-Type: audio/midi' in part or b'Content-Type: application/midi' in part or b'Content-Type: audio/x-midi' in part:
-                            if i + 1 < len(parts):
-                                # This is the MIDI data
-                                midi_data = parts[i + 1]
-                                # Clean up the data (remove trailing boundary markers)
-                                if b'------' in midi_data:
-                                    midi_data = midi_data.split(b'------')[0]
-                                # Extract filename
-                                if b'filename=' in part:
-                                    start = part.find(b'filename="') + 10
-                                    end = part.find(b'"', start)
-                                    if start > 9 and end > start:
-                                        original_filename = part[start:end].decode('utf-8')
-                        elif b'filename=' in part and midi_data is None:
-                            # This might be the file part
-                            if i + 1 < len(parts):
-                                # Try to extract filename
-                                filename_start = part.find(b'filename="')
-                                if filename_start >= 0:
-                                    fn_start = filename_start + 10
-                                    fn_end = part.find(b'"', fn_start)
-                                    if fn_end > fn_start:
-                                        original_filename = part[fn_start:fn_end].decode('utf-8', errors='ignore')
-                                midi_data = parts[i + 1]
-                                if b'------' in midi_data:
-                                    midi_data = midi_data.split(b'------')[0]
+                        # Look for headers section (ends with \r\n\r\n)
+                        header_end = part.find(b'\r\n\r\n')
+                        if header_end < 0:
+                            continue
+                            
+                        headers = part[:header_end]
+                        body = part[header_end + 4:]  # Skip \r\n\r\n
+                        
+                        # Remove trailing \r\n if present
+                        if body.endswith(b'\r\n'):
+                            body = body[:-2]
+                        
+                        # Check if this is the MIDI file
+                        if b'name="midi_file"' in headers or b'filename=' in headers:
+                            # Extract filename if present
+                            if b'filename="' in headers:
+                                fn_start = headers.find(b'filename="') + 10
+                                fn_end = headers.find(b'"', fn_start)
+                                if fn_end > fn_start:
+                                    original_filename = headers[fn_start:fn_end].decode('utf-8', errors='ignore')
+                            
+                            midi_data = body
+                            print(f"Extracted MIDI from multipart: {len(midi_data)} bytes")
+                            break
+                        
+                        # Check if this is the model parameter
+                        elif b'name="selected_model"' in headers or b'name="model"' in headers:
+                            selected_model = body.decode('utf-8', errors='ignore').strip()
+                            print(f"Selected model from request: {selected_model}")
             else:
                 # Not multipart, treat as raw MIDI
                 midi_data = raw_data
             
-            if not midi_data or len(midi_data) < 100:  # MIDI files should be at least 100 bytes
-                print(f"Invalid MIDI data: length={len(midi_data) if midi_data else 0}")
-                self._send_error_response(400, "Invalid or empty MIDI file")
+            if not midi_data:
+                print(f"[ERROR] No MIDI data extracted from multipart form")
+                print(f"Content-Type: {content_type}")
+                print(f"Content-Length: {content_length}")
+                print(f"Raw data preview: {raw_data[:200] if raw_data else 'None'}")
+                self._send_error_response(400, "Could not extract MIDI file from upload")
+                return
+                
+            if len(midi_data) < 50:  # MIDI files should be at least 50 bytes (very minimal)
+                print(f"[ERROR] MIDI data too short: length={len(midi_data)}")
+                print(f"MIDI data preview: {midi_data[:100]}")
+                self._send_error_response(400, f"Invalid MIDI file (too short: {len(midi_data)} bytes)")
                 return
             
             print(f"Extracted MIDI data: {len(midi_data)} bytes, filename: {original_filename}")
