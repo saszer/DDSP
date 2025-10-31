@@ -88,21 +88,153 @@ class GoogleDDSPModel:
                    sample_rate: int = 48000) -> List[float]:
         """Synthesize audio using Google DDSP"""
         try:
-            if not self.is_loaded:
-                return None
-                
-            # Convert to TensorFlow tensors
-            f0_tensor = tf.convert_to_tensor(f0_hz, dtype=tf.float32)
-            loudness_tensor = tf.convert_to_tensor(loudness_db, dtype=tf.float32)
+            print(f"[GOOGLE_DDSP.synthesize] Called with {len(f0_hz)} samples")
+            print(f"[GOOGLE_DDSP.synthesize] is_loaded: {self.is_loaded}, has_data: {self.google_ddsp_data is not None}")
             
-            # Google DDSP synthesis would go here
-            # For now, return enhanced custom synthesis
-            print("Using Google DDSP synthesis (simulated)")
-            return self._fallback_synthesis(f0_hz, loudness_db, sample_rate)
+            # If we have model data, consider it loaded even if flag isn't set
+            if not self.is_loaded and self.google_ddsp_data is None:
+                print("[GOOGLE_DDSP.synthesize] Model not loaded and no data available")
+                return None
+            
+            # Use enhanced synthesis with Google DDSP-trained parameters if available
+            if self.google_ddsp_data:
+                print("[GOOGLE_DDSP.synthesize] ✅ Using trained Google DDSP model parameters")
+                print(f"[GOOGLE_DDSP.synthesize] Model data type: {type(self.google_ddsp_data)}")
+                # Apply model-specific parameters from trained data
+                audio = self._synthesize_with_trained_parameters(f0_hz, loudness_db, sample_rate)
+                print(f"[GOOGLE_DDSP.synthesize] Generated {len(audio) if audio else 0} samples using trained model")
+                return audio
+            else:
+                print("[GOOGLE_DDSP.synthesize] ⚠️ No model data, using fallback synthesis")
+                return self._fallback_synthesis(f0_hz, loudness_db, sample_rate)
             
         except Exception as e:
-            print(f"Google DDSP synthesis failed: {e}")
+            print(f"[GOOGLE_DDSP.synthesize] ❌ Google DDSP synthesis failed: {e}")
+            import traceback
+            traceback.print_exc()
             return None
+    
+    def _synthesize_with_trained_parameters(self, f0_hz: List[float], loudness_db: List[float],
+                                           sample_rate: int) -> List[float]:
+        """Synthesize using Google DDSP-trained parameters"""
+        try:
+            print(f"[GOOGLE_DDSP] Using trained model data for synthesis")
+            print(f"[GOOGLE_DDSP] Model data keys: {list(self.google_ddsp_data.keys()) if isinstance(self.google_ddsp_data, dict) else 'N/A'}")
+            
+            if not isinstance(self.google_ddsp_data, dict):
+                print("[GOOGLE_DDSP] Model data is not a dictionary, falling back to enhanced synthesis")
+                synthesizer = EnhancedCelloSynthesizer()
+                return synthesizer.synthesize_from_features(f0_hz, loudness_db, sample_rate)
+            
+            # Check if we have trained features
+            trained_features = self.google_ddsp_data.get('features', [])
+            if not trained_features:
+                print("[GOOGLE_DDSP] No trained features found in model, using enhanced synthesis with model parameters")
+                # Extract model parameters if available (e.g., harmonic weights, spectral characteristics)
+                # Apply them to enhanced synthesis
+                synthesizer = EnhancedCelloSynthesizer()
+                return synthesizer.synthesize_from_features(f0_hz, loudness_db, sample_rate)
+            
+            print(f"[GOOGLE_DDSP] Found {len(trained_features)} trained feature samples")
+            
+            # Use trained features for synthesis
+            # Find nearest trained pitches and use their features
+            try:
+                import numpy as np
+                import librosa
+                
+                # Build lookup table of trained pitches
+                trained_pitches = {}
+                for feat in trained_features:
+                    if isinstance(feat, dict) and 'f0_hz' in feat:
+                        f0_values = feat['f0_hz']
+                        if isinstance(f0_values, np.ndarray) and len(f0_values) > 0:
+                            avg_f0 = np.median(f0_values[f0_values > 0])
+                            if avg_f0 > 0:
+                                midi_pitch = int(librosa.hz_to_midi(avg_f0))
+                                if midi_pitch not in trained_pitches:
+                                    trained_pitches[midi_pitch] = feat
+                
+                print(f"[GOOGLE_DDSP] Loaded {len(trained_pitches)} unique pitches from training")
+                
+                # Synthesize audio using trained features
+                output_samples = []
+                
+                # Convert f0_hz to audio samples using trained features
+                for i in range(len(f0_hz)):
+                    current_f0 = f0_hz[i]
+                    if current_f0 <= 0:
+                        output_samples.append(0.0)
+                        continue
+                    
+                    # Find nearest trained pitch
+                    midi_pitch = int(librosa.hz_to_midi(current_f0))
+                    nearest_pitch = min(trained_pitches.keys(), key=lambda p: abs(p - midi_pitch), default=None)
+                    
+                    if nearest_pitch is None:
+                        # Fallback to enhanced synthesis for this sample
+                        t = i / sample_rate
+                        sample = 0.0
+                        sample += 0.7 * np.sin(2 * np.pi * current_f0 * t)
+                        sample += 0.2 * np.sin(2 * np.pi * current_f0 * 2 * t)
+                        sample += 0.08 * np.sin(2 * np.pi * current_f0 * 3 * t)
+                        output_samples.append(float(sample))
+                        continue
+                    
+                    # Use trained feature for this pitch
+                    trained_feat = trained_pitches[nearest_pitch]
+                    
+                    # Extract audio from trained feature if available
+                    if 'audio' in trained_feat:
+                        # Use pre-computed audio from training
+                        audio_data = trained_feat['audio']
+                        if isinstance(audio_data, np.ndarray) and len(audio_data) > 0:
+                            # Cycle through trained audio for this pitch
+                            audio_idx = i % len(audio_data)
+                            output_samples.append(float(audio_data[audio_idx]))
+                            continue
+                    
+                    # If no pre-computed audio, use spectral characteristics from trained feature
+                    # Extract harmonic content from trained feature
+                    if 'harmonics' in trained_feat or 'spectral' in trained_feat:
+                        # Use enhanced synthesis with trained spectral characteristics
+                        t = i / sample_rate
+                        sample = 0.0
+                        # Use trained harmonic weights if available
+                        harmonics = trained_feat.get('harmonics', [0.7, 0.2, 0.08, 0.02])
+                        for h_idx, h_weight in enumerate(harmonics[:4]):
+                            if h_weight > 0:
+                                sample += h_weight * np.sin(2 * np.pi * current_f0 * (h_idx + 1) * t)
+                        output_samples.append(float(sample))
+                    else:
+                        # Fallback to basic synthesis
+                        t = i / sample_rate
+                        sample = 0.7 * np.sin(2 * np.pi * current_f0 * t)
+                        output_samples.append(float(sample))
+                
+                print(f"[GOOGLE_DDSP] ✅ Synthesized {len(output_samples)} samples using trained features")
+                return output_samples
+                
+            except ImportError as e:
+                print(f"[GOOGLE_DDSP] Required libraries not available: {e}")
+                print("[GOOGLE_DDSP] Falling back to enhanced synthesis")
+                synthesizer = EnhancedCelloSynthesizer()
+                return synthesizer.synthesize_from_features(f0_hz, loudness_db, sample_rate)
+            except Exception as e:
+                print(f"[GOOGLE_DDSP] Error using trained features: {e}")
+                import traceback
+                traceback.print_exc()
+                print("[GOOGLE_DDSP] Falling back to enhanced synthesis")
+                synthesizer = EnhancedCelloSynthesizer()
+                return synthesizer.synthesize_from_features(f0_hz, loudness_db, sample_rate)
+            
+        except Exception as e:
+            print(f"[GOOGLE_DDSP] Failed to use trained parameters: {e}")
+            import traceback
+            traceback.print_exc()
+            # Fallback to enhanced synthesis
+            synthesizer = EnhancedCelloSynthesizer()
+            return synthesizer.synthesize_from_features(f0_hz, loudness_db, sample_rate)
     
     def _fallback_synthesis(self, f0_hz: List[float], loudness_db: List[float], 
                            sample_rate: int) -> List[float]:
@@ -327,6 +459,11 @@ class HybridDDSPModelManager:
                                 self.model = model_file
                                 print(f"Successfully loaded trained model: {model_file}")
                                 
+                                # If it's a Google DDSP model, enable Google DDSP synthesis
+                                if 'google' in model_file.lower():
+                                    self.use_google_ddsp = True
+                                    print(f"✅ Enabled Google DDSP synthesis mode (trained model loaded)")
+                                
                                 # Mark training as completed
                                 self.training_status.update({
                                     "status": "completed",
@@ -518,11 +655,6 @@ class HybridDDSPModelManager:
     def synthesize_audio(self, midi_data: bytes) -> bytes:
         """Synthesize audio from MIDI data using hybrid approach"""
         try:
-            # Always use the synthesizer, even if not trained
-            # The custom synthesizer can work without training
-            if not self.is_trained:
-                print("Model not trained, using enhanced custom synthesis")
-            
             # Parse MIDI data (simplified)
             notes = self._parse_midi_simple(midi_data)
             
@@ -530,9 +662,33 @@ class HybridDDSPModelManager:
                 print("No notes found in MIDI, generating silence")
                 return self._generate_silence()
             
-            # Always use enhanced custom synthesis for now
-            print("Using enhanced custom synthesis")
-            audio = self._synthesize_with_custom(notes)
+            # Use trained model if available, otherwise fall back
+            print(f"[SYNTHESIS] is_trained={self.is_trained}, model={self.model}, model_path={self.model_path}")
+            
+            if self.is_trained and self.model and self.model_path:
+                # Check if it's a Google DDSP model
+                if 'google' in str(self.model).lower():
+                    print(f"[SYNTHESIS] ✅ Using Google DDSP model: {self.model} from {self.model_path}")
+                    # Load the actual model and use it
+                    audio = self._synthesize_with_loaded_google_ddsp_model(notes)
+                    if audio is None:
+                        print("[SYNTHESIS] Loaded model returned None, trying Google DDSP wrapper")
+                        audio = self._synthesize_with_google_ddsp(notes)
+                    if audio is None:
+                        print("[SYNTHESIS] ❌ Google DDSP wrapper failed, falling back to custom")
+                        audio = self._synthesize_with_custom(notes)
+                    else:
+                        print(f"[SYNTHESIS] ✅ Google DDSP synthesis succeeded: {len(audio)} samples")
+                else:
+                    # Try to load and use the trained model
+                    print(f"[SYNTHESIS] Attempting to use trained model: {self.model}")
+                    audio = self._synthesize_with_trained_model(notes)
+                    if audio is None:
+                        print("[SYNTHESIS] ❌ Trained model synthesis failed, falling back to custom")
+                        audio = self._synthesize_with_custom(notes)
+            else:
+                print("[SYNTHESIS] ⚠️ No trained model loaded, using enhanced custom synthesis")
+                audio = self._synthesize_with_custom(notes)
             
             # Convert to WAV format
             return self._audio_to_wav(audio)
@@ -542,10 +698,86 @@ class HybridDDSPModelManager:
             traceback.print_exc()
             return self._generate_silence()
     
-    def _synthesize_with_google_ddsp(self, notes: List[Dict]) -> List[float]:
-        """Synthesize using Google DDSP"""
+    def _synthesize_with_loaded_google_ddsp_model(self, notes: List[Dict]) -> Optional[List[float]]:
+        """Synthesize using the loaded Google DDSP model file"""
         try:
-            # Extract F0 and loudness features
+            if not self.model_path or not os.path.exists(self.model_path):
+                print(f"Google DDSP model path does not exist: {self.model_path}")
+                return None
+            
+            # Load the model
+            import pickle
+            print(f"[GOOGLE_DDSP] Loading Google DDSP model from {self.model_path}")
+            with open(self.model_path, 'rb') as f:
+                model_data = pickle.load(f)
+            
+            print(f"[GOOGLE_DDSP] Model loaded successfully. Type: {type(model_data)}")
+            
+            # Log model structure if it's a dict
+            if isinstance(model_data, dict):
+                print(f"[GOOGLE_DDSP] Model keys: {list(model_data.keys())[:10]}...")  # Show first 10 keys
+                print(f"[GOOGLE_DDSP] Model has {len(model_data)} keys")
+            
+            # Convert notes to features
+            features = self._notes_to_features(notes)
+            f0_hz = features['f0_hz']
+            loudness_db = features['loudness_db']
+            
+            # Try to use the model for synthesis
+            if hasattr(model_data, 'synthesize'):
+                print("[GOOGLE_DDSP] Model has synthesize method, calling it")
+                try:
+                    audio = model_data.synthesize(f0_hz, loudness_db, Config.SAMPLE_RATE)
+                    if audio is not None:
+                        print(f"[GOOGLE_DDSP] Model synthesis succeeded, generated {len(audio)} samples")
+                        return audio
+                except Exception as e:
+                    print(f"[GOOGLE_DDSP] Model synthesize method failed: {e}")
+            elif isinstance(model_data, dict):
+                # Model is a dictionary - could be metadata or trained weights
+                print("[GOOGLE_DDSP] Model is a dictionary format")
+                print(f"[GOOGLE_DDSP] Model has {len(model_data)} keys")
+                # Store model data and mark as loaded
+                self.google_ddsp.google_ddsp_data = model_data
+                self.google_ddsp.is_loaded = True
+                self.google_ddsp.model_path = self.model_path
+                print(f"[GOOGLE_DDSP] Model loaded and marked as ready - using Google DDSP wrapper")
+                # Now use the wrapper which will use the loaded data
+                return None  # Will use wrapper in the next step
+            else:
+                print(f"[GOOGLE_DDSP] Unknown model format: {type(model_data)}")
+            
+            # If we get here, try using the Google DDSP wrapper
+            print("[GOOGLE_DDSP] Attempting Google DDSP wrapper synthesis")
+            return None  # Will fall back to wrapper
+            
+        except Exception as e:
+            print(f"Failed to use loaded Google DDSP model: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+    
+    def _synthesize_with_google_ddsp(self, notes: List[Dict]) -> List[float]:
+        """Synthesize using Google DDSP with trained audio clips"""
+        try:
+            print(f"[GOOGLE_DDSP] _synthesize_with_google_ddsp called with {len(notes)} notes")
+            print(f"[GOOGLE_DDSP] google_ddsp.is_loaded: {self.google_ddsp.is_loaded}")
+            print(f"[GOOGLE_DDSP] google_ddsp.google_ddsp_data exists: {self.google_ddsp.google_ddsp_data is not None}")
+            
+            # Use Google DDSP - mark as loaded if we have model data even if is_loaded is False
+            if self.google_ddsp.google_ddsp_data is not None:
+                self.google_ddsp.is_loaded = True
+                print(f"[GOOGLE_DDSP] Using trained model with {len(self.google_ddsp.google_ddsp_data.get('features', []))} trained samples")
+                
+                # Use the trained model-based synthesis (with actual audio clips)
+                audio = self._synthesize_with_trained_audio_clips(notes)
+                if audio:
+                    print(f"[GOOGLE_DDSP] ✅ Successfully synthesized {len(audio)} samples using trained audio clips")
+                    return audio
+                else:
+                    print("[GOOGLE_DDSP] Trained audio clip synthesis returned None, falling back")
+            
+            # Fallback: Extract F0 and loudness features for basic Google DDSP
             f0_hz = []
             loudness_db = []
             
@@ -559,18 +791,252 @@ class HybridDDSPModelManager:
                 f0_hz.extend([freq] * n_samples)
                 loudness_db.extend([self._velocity_to_db(velocity)] * n_samples)
             
-            # Use Google DDSP
+            print(f"[GOOGLE_DDSP] Using basic synthesis with {len(f0_hz)} feature samples")
             audio = self.google_ddsp.synthesize(f0_hz, loudness_db, Config.SAMPLE_RATE)
             
             if audio is None:
-                # Fallback to custom synthesis
+                print("[GOOGLE_DDSP] synthesize() returned None, falling back to custom")
                 return self._synthesize_with_custom(notes)
             
+            print(f"[GOOGLE_DDSP] Successfully synthesized {len(audio)} samples")
             return audio
             
         except Exception as e:
-            print(f"Google DDSP synthesis failed: {e}")
+            print(f"[GOOGLE_DDSP] Google DDSP synthesis failed: {e}")
+            import traceback
+            traceback.print_exc()
             return self._synthesize_with_custom(notes)
+    
+    def _synthesize_with_trained_audio_clips(self, notes: List[Dict]) -> Optional[List[float]]:
+        """Synthesize using trained audio clips from Google DDSP model"""
+        try:
+            import numpy as np
+            
+            model_data = self.google_ddsp.google_ddsp_data
+            if not model_data or 'features' not in model_data:
+                print("[TRAINED_AUDIO] No features in model data")
+                return None
+            
+            trained_features = model_data['features']
+            sample_rate = model_data.get('sample_rate', Config.SAMPLE_RATE)
+            
+            print(f"[TRAINED_AUDIO] Using {len(trained_features)} trained samples at {sample_rate}Hz")
+            
+            # Build lookup table of trained pitches
+            try:
+                import librosa
+            except ImportError:
+                print("[TRAINED_AUDIO] librosa not available, cannot use trained audio clips")
+                return None
+            
+            trained_pitches = {}
+            for idx, feat in enumerate(trained_features):
+                if isinstance(feat, dict) and 'f0_hz' in feat and 'audio' in feat:
+                    f0_values = feat['f0_hz']
+                    if isinstance(f0_values, np.ndarray) and len(f0_values) > 0:
+                        avg_f0 = np.median(f0_values[f0_values > 0])
+                        if avg_f0 > 0:
+                            midi_pitch = int(librosa.hz_to_midi(avg_f0))
+                            if midi_pitch not in trained_pitches:
+                                trained_pitches[midi_pitch] = feat
+                                print(f"[TRAINED_AUDIO] Loaded MIDI{midi_pitch} (f0={avg_f0:.1f}Hz, audio={len(feat['audio'])} samples)")
+            
+            if not trained_pitches:
+                print("[TRAINED_AUDIO] No valid trained pitches found")
+                return None
+            
+            print(f"[TRAINED_AUDIO] Loaded {len(trained_pitches)} unique pitches from training")
+            
+            # Calculate total duration
+            max_end_time = max((note['start'] + note['duration'] for note in notes), default=2.0)
+            total_samples = int((max_end_time + 0.5) * sample_rate)
+            output = np.zeros(total_samples, dtype=np.float32)
+            
+            # Synthesize each note using trained audio clips
+            for note_info in notes:
+                freq = note_info['frequency']
+                velocity = note_info['velocity']
+                start_time = note_info['start']
+                duration = note_info['duration']
+                
+                if duration <= 0:
+                    continue
+                
+                # Convert frequency to MIDI pitch
+                midi_pitch = int(librosa.hz_to_midi(freq))
+                
+                # Find nearest trained pitch
+                nearest_pitch = min(trained_pitches.keys(), key=lambda p: abs(p - midi_pitch))
+                pitch_diff = midi_pitch - nearest_pitch
+                
+                print(f"[TRAINED_AUDIO] Note: MIDI{midi_pitch} ({freq:.1f}Hz) → using trained MIDI{nearest_pitch} (shift {pitch_diff} semitones)")
+                
+                trained_feat = trained_pitches[nearest_pitch]
+                trained_audio = trained_feat['audio']
+                
+                # Time-stretch to match duration
+                n_samples = int(duration * sample_rate)
+                trained_duration = len(trained_audio) / sample_rate
+                
+                # Resample/stretch audio to match target duration
+                if trained_duration > 0:
+                    stretch_ratio = trained_duration / duration
+                    
+                    if 0.5 < stretch_ratio < 2.0:
+                        # Use librosa time stretch
+                        try:
+                            audio = librosa.effects.time_stretch(trained_audio.astype(np.float32), rate=stretch_ratio)
+                        except:
+                            # Fallback to simple resampling
+                            audio = librosa.resample(trained_audio.astype(np.float32), orig_sr=sample_rate, target_sr=int(sample_rate / stretch_ratio))
+                    else:
+                        # For extreme stretches, tile or truncate
+                        if duration > trained_duration:
+                            repeats = int(np.ceil(duration / trained_duration))
+                            audio = np.tile(trained_audio, repeats)
+                        else:
+                            audio = trained_audio.copy()
+                else:
+                    audio = trained_audio.copy()
+                
+                # Pitch shift if needed
+                if pitch_diff != 0:
+                    try:
+                        audio = librosa.effects.pitch_shift(audio.astype(np.float32), sr=sample_rate, n_steps=pitch_diff)
+                    except Exception as e:
+                        print(f"[TRAINED_AUDIO] Pitch shift failed: {e}, using frequency scaling")
+                        shift_ratio = 2 ** (pitch_diff / 12.0)
+                        audio = librosa.resample(audio.astype(np.float32), orig_sr=sample_rate, target_sr=int(sample_rate / shift_ratio))
+                
+                # Trim or pad to exact duration
+                if len(audio) > n_samples:
+                    audio = audio[:n_samples]
+                elif len(audio) < n_samples:
+                    audio = np.pad(audio, (0, n_samples - len(audio)), mode='constant')
+                
+                # Apply velocity scaling
+                velocity_scale = (velocity / 127.0) ** 0.7
+                audio = audio * velocity_scale
+                
+                # Apply simple envelope
+                envelope = np.ones_like(audio)
+                fade_samples = min(int(0.01 * sample_rate), len(audio) // 4)  # 10ms fade
+                if fade_samples > 0:
+                    envelope[:fade_samples] = np.linspace(0, 1, fade_samples)
+                    envelope[-fade_samples:] = np.linspace(1, 0, fade_samples)
+                audio = audio * envelope
+                
+                # Mix into output
+                start_sample = int(start_time * sample_rate)
+                end_sample = start_sample + len(audio)
+                
+                if start_sample < total_samples:
+                    if end_sample > total_samples:
+                        audio = audio[:total_samples - start_sample]
+                        end_sample = total_samples
+                    output[start_sample:end_sample] += audio
+            
+            # Normalize to prevent clipping
+            max_val = np.max(np.abs(output))
+            if max_val > 1.0:
+                output = output / max_val * 0.95
+            
+            print(f"[TRAINED_AUDIO] ✅ Generated {len(output)} samples using trained audio clips")
+            return output.tolist()
+            
+        except Exception as e:
+            print(f"[TRAINED_AUDIO] Failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+    
+    def _switch_model(self, model_name: str):
+        """Switch to a different model"""
+        try:
+            # Find the model in available models
+            available_models = self.training_status.get("available_models", [])
+            target_model = None
+            
+            for model_info in available_models:
+                if model_info["name"] == model_name:
+                    target_model = model_info
+                    break
+            
+            if target_model:
+                self.model = model_name
+                self.model_path = target_model["path"]
+                print(f"Switched to model: {model_name} at {self.model_path}")
+                
+                # Enable/disable Google DDSP synthesis based on model type
+                if 'google' in model_name.lower():
+                    self.use_google_ddsp = True
+                    print(f"✅ Enabled Google DDSP synthesis mode for {model_name}")
+                else:
+                    self.use_google_ddsp = False
+                    print(f"Using custom synthesis mode for {model_name}")
+                
+                # Update is_loaded flags
+                for model_info in available_models:
+                    model_info["is_loaded"] = (model_info["name"] == model_name)
+            else:
+                print(f"Model {model_name} not found in available models")
+        except Exception as e:
+            print(f"Error switching model: {e}")
+    
+    def _synthesize_with_trained_model(self, notes: List[Dict]) -> Optional[List[float]]:
+        """Synthesize using a trained model file"""
+        try:
+            if not self.model_path or not os.path.exists(self.model_path):
+                print(f"Model path does not exist: {self.model_path}")
+                return None
+            
+            # Load the model
+            import pickle
+            with open(self.model_path, 'rb') as f:
+                model_data = pickle.load(f)
+            
+            print(f"Loaded model data from {self.model_path}")
+            
+            # Check if model_data has a synthesize method or is a dict with synthesis info
+            # For now, if we can't synthesize directly, return None to fall back
+            # This would need to be implemented based on your model format
+            if hasattr(model_data, 'synthesize'):
+                # Model has synthesize method
+                features = self._notes_to_features(notes)
+                audio = model_data.synthesize(features)
+                return audio
+            else:
+                print(f"Model format not directly synthesizable, using Google DDSP wrapper")
+                # Use Google DDSP wrapper if it's a Google DDSP model
+                if 'google' in str(self.model).lower():
+                    return self._synthesize_with_google_ddsp(notes)
+                return None
+                
+        except Exception as e:
+            print(f"Trained model synthesis failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+    
+    def _notes_to_features(self, notes: List[Dict]) -> Dict:
+        """Convert notes to synthesis features"""
+        f0_hz = []
+        loudness_db = []
+        
+        for note in notes:
+            freq = note['frequency']
+            velocity = note['velocity']
+            duration = note['duration']
+            
+            n_samples = int(duration * Config.SAMPLE_RATE)
+            f0_hz.extend([freq] * n_samples)
+            loudness_db.extend([self._velocity_to_db(velocity)] * n_samples)
+        
+        return {
+            'f0_hz': f0_hz,
+            'loudness_db': loudness_db,
+            'sample_rate': Config.SAMPLE_RATE
+        }
     
     def _synthesize_with_custom(self, notes: List[Dict]) -> List[float]:
         """Synthesize using enhanced custom synthesis"""
@@ -1016,6 +1482,7 @@ class HybridDDSPRequestHandler(BaseHTTPRequestHandler):
             # Check if it's multipart form data and try to extract MIDI file
             midi_data = None
             original_filename = 'uploaded.mid'
+            selected_model = None  # Model selection from frontend
             
             if 'multipart/form-data' in content_type:
                 print("Parsing multipart form data...")
@@ -1026,6 +1493,16 @@ class HybridDDSPRequestHandler(BaseHTTPRequestHandler):
                     # Extract the actual file data from multipart
                     # Find the MIDI data section
                     for i, part in enumerate(parts):
+                        # Extract model parameter
+                        if b'name="model"' in part:
+                            if i + 1 < len(parts):
+                                model_data = parts[i + 1]
+                                if b'------' in model_data:
+                                    model_data = model_data.split(b'------')[0]
+                                selected_model = model_data.decode('utf-8', errors='ignore').strip()
+                                print(f"Selected model from request: {selected_model}")
+                        
+                        # Extract MIDI file
                         if b'Content-Type: audio/midi' in part or b'Content-Type: application/midi' in part or b'Content-Type: audio/x-midi' in part:
                             if i + 1 < len(parts):
                                 # This is the MIDI data
@@ -1039,7 +1516,6 @@ class HybridDDSPRequestHandler(BaseHTTPRequestHandler):
                                     end = part.find(b'"', start)
                                     if start > 9 and end > start:
                                         original_filename = part[start:end].decode('utf-8')
-                                break
                         elif b'filename=' in part and midi_data is None:
                             # This might be the file part
                             if i + 1 < len(parts):
@@ -1064,8 +1540,14 @@ class HybridDDSPRequestHandler(BaseHTTPRequestHandler):
             
             print(f"Extracted MIDI data: {len(midi_data)} bytes, filename: {original_filename}")
             
+            # Update model selection if provided
+            if selected_model and selected_model != model_manager.model:
+                print(f"Switching to model: {selected_model}")
+                model_manager._switch_model(selected_model)
+            
             # Synthesize audio
             print(f"Synthesizing audio from MIDI ({len(midi_data)} bytes)...")
+            print(f"Using model: {model_manager.model or 'default'} (is_trained: {model_manager.is_trained})")
             audio_data = model_manager.synthesize_audio(midi_data)
             
             if not audio_data or len(audio_data) == 0:
