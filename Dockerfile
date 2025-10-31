@@ -42,14 +42,8 @@ COPY ddsp_server_hybrid.py .
 # Create directories for output and models
 RUN mkdir -p output models
 
-# Copy trained models if they exist (using RUN with shell to handle optional directory)
-RUN if [ -d models ] && [ "$(ls -A models)" ]; then \
-        echo "Models directory found, copying..."; \
-        cp -r models/* /app/models/ || true; \
-    else \
-        echo "No models directory or empty, skipping..."; \
-        mkdir -p /app/models; \
-    fi
+# Copy trained models into the image (defaults)
+COPY models/ ./models/
 
 # Expose port
 EXPOSE 8000

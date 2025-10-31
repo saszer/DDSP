@@ -41,5 +41,5 @@ primary_region = "iad"
 # Persistent storage for models (uploaded models persist across deployments)
 [[mounts]]
   source = "model_storage"
-  destination = "/app/models"
+  destination = "/data/models"
 

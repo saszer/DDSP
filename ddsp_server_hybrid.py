@@ -276,20 +276,30 @@ class HybridDDSPModelManager:
     def _load_existing_models(self):
         """Load existing trained model files"""
         try:
-            models_dir = "models"
-            if os.path.exists(models_dir):
+            # Search multiple possible locations: baked-in models and mounted volume
+            candidate_dirs = [
+                "models",              # baked into image
+                "/data/models",        # Fly.io volume mount (preferred)
+                "/app/models"          # legacy mount path
+            ]
+
+            model_list = []
+            found_any = False
+
+            for models_dir in candidate_dirs:
+                if not os.path.exists(models_dir):
+                    continue
                 model_files = [f for f in os.listdir(models_dir) if f.endswith('.pkl')]
                 
                 if model_files:
-                    print(f"Found {len(model_files)} trained model(s)")
+                    found_any = True
+                    print(f"Found {len(model_files)} trained model(s) in {models_dir}")
                     
                     # Prioritize Google DDSP model
                     model_files_sorted = sorted(model_files, key=lambda x: (
                         'google' in x.lower(),  # Google models first
                         os.path.getsize(os.path.join(models_dir, x))  # Then by size (larger = better)
                     ), reverse=True)
-                    
-                    model_list = []
                     
                     for model_file in model_files_sorted:
                         model_path = os.path.join(models_dir, model_file)
@@ -330,15 +340,15 @@ class HybridDDSPModelManager:
                             print(f"Failed to load model {model_file}: {e}")
                             continue
                     
-                    # Update is_loaded flags
-                    for model_info in model_list:
-                        model_info["is_loaded"] = (model_info["name"] == self.model)
-                    
-                    # Update training status with all available models
-                    self.training_status["available_models"] = model_list
-                else:
-                    print("No trained models found in models/ directory")
-                    self.training_status["available_models"] = []
+            # Update is_loaded flags
+            for model_info in model_list:
+                model_info["is_loaded"] = (model_info["name"] == self.model)
+
+            # Update training status with all available models
+            self.training_status["available_models"] = model_list
+
+            if not found_any:
+                print("No trained models found in any models directory")
         except Exception as e:
             print(f"Error loading models: {e}")
     
