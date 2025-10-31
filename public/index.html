@@ -176,15 +176,73 @@
                 <!-- Synthesis Controls -->
                 <div class="glass-dark rounded-xl p-6">
                     <h2 class="text-xl font-semibold mb-4">Synthesis Controls</h2>
-                    
-                    <!-- Release / Staccato Slider -->
+
+                    <!-- Transpose / Tempo -->
+                    <div class="grid grid-cols-2 gap-4 mb-6">
+                        <div>
+                            <label class="block text-sm font-medium mb-2">Transpose (semitones)</label>
+                            <input id="transpose-semitones" type="number" value="0" min="-24" max="24" class="w-full p-3 bg-gray-800 border border-gray-600 rounded-lg text-white" />
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium mb-2">Tempo Scale (x)</label>
+                            <input id="tempo-scale" type="number" value="1" step="0.1" min="0.25" max="4" class="w-full p-3 bg-gray-800 border border-gray-600 rounded-lg text-white" />
+                        </div>
+                    </div>
+
+                    <!-- ADSR -->
+                    <div class="grid grid-cols-4 gap-4 mb-6">
+                        <div>
+                            <label class="block text-xs font-medium mb-2">Attack (ms)</label>
+                            <input id="adsr-attack-ms" type="number" value="20" min="0" max="2000" class="w-full p-2 bg-gray-800 border border-gray-600 rounded-lg text-white" />
+                        </div>
+                        <div>
+                            <label class="block text-xs font-medium mb-2">Decay (ms)</label>
+                            <input id="adsr-decay-ms" type="number" value="50" min="0" max="2000" class="w-full p-2 bg-gray-800 border border-gray-600 rounded-lg text-white" />
+                        </div>
+                        <div>
+                            <label class="block text-xs font-medium mb-2">Sustain (0-1)</label>
+                            <input id="adsr-sustain" type="number" value="0.85" step="0.01" min="0" max="1" class="w-full p-2 bg-gray-800 border border-gray-600 rounded-lg text-white" />
+                        </div>
+                        <div>
+                            <label class="block text-xs font-medium mb-2">Release (ms)</label>
+                            <input id="adsr-release-ms" type="number" value="100" min="0" max="5000" class="w-full p-2 bg-gray-800 border border-gray-600 rounded-lg text-white" />
+                        </div>
+                    </div>
+
+                    <!-- Modulation / Gain / Reverb -->
+                    <div class="grid grid-cols-3 gap-4 mb-6">
+                        <div>
+                            <label class="block text-sm font-medium mb-2">Tremolo Rate (Hz)</label>
+                            <input id="tremolo-rate" type="number" value="5" step="0.1" min="0" max="20" class="w-full p-3 bg-gray-800 border border-gray-600 rounded-lg text-white" />
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium mb-2">Tremolo Depth (0-1)</label>
+                            <input id="tremolo-depth" type="number" value="0.15" step="0.01" min="0" max="1" class="w-full p-3 bg-gray-800 border border-gray-600 rounded-lg text-white" />
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium mb-2">Gain (dB)</label>
+                            <input id="gain-db" type="number" value="0" step="0.5" min="-24" max="24" class="w-full p-3 bg-gray-800 border border-gray-600 rounded-lg text-white" />
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-4 mb-6">
+                        <div>
+                            <label class="block text-sm font-medium mb-2">Reverb Wet (0-1)</label>
+                            <input id="reverb-wet" type="number" value="0.0" step="0.05" min="0" max="1" class="w-full p-3 bg-gray-800 border border-gray-600 rounded-lg text-white" />
+                        </div>
+                        <div class="flex items-center mt-8">
+                            <input id="normalize" type="checkbox" class="mr-3 w-4 h-4" checked />
+                            <label for="normalize" class="text-sm">Normalize Output</label>
+                        </div>
+                    </div>
+
+                    <!-- Legacy Controls kept for compatibility -->
                     <div class="mb-6">
                         <div class="flex justify-between items-center mb-2">
                             <span class="text-sm font-medium">Release Duration</span>
                             <span id="release-value" class="text-blue-400 font-semibold">20%</span>
                         </div>
-                        <input type="range" id="release-slider" min="0" max="100" value="20" 
-                            class="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-purple-500">
+                        <input type="range" id="release-slider" min="0" max="100" value="20" class="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-purple-500">
                         <div class="flex justify-between text-xs text-gray-500 mt-1">
                             <span>Staccato (0%)</span>
                             <span id="release-label" class="text-blue-400">Short Release (20%)</span>
@@ -192,8 +250,7 @@
                         </div>
                         <p class="text-xs text-gray-400 mt-1">Note: Higher values = longer sustained notes</p>
                     </div>
-                    
-                    <!-- Cello Section Tone Dropdown -->
+
                     <div class="mb-6">
                         <label class="block text-sm font-medium mb-2">Cello Section Tone</label>
                         <select id="tone-selector" class="w-full p-3 bg-gray-800 border border-gray-600 rounded-lg text-white">
@@ -204,12 +261,9 @@
                             <option value="vintage">Vintage</option>
                         </select>
                     </div>
-                    
-                    <!-- Regenerate Button -->
+
                     <div class="mb-4">
-                        <button id="regenerate-btn" class="w-full btn-primary px-6 py-3 rounded-lg font-semibold">
-                            Regenerate Audio
-                        </button>
+                        <button id="regenerate-btn" class="w-full btn-primary px-6 py-3 rounded-lg font-semibold">Regenerate Audio</button>
                     </div>
                 </div>
             </div>
@@ -605,6 +659,17 @@
             // Get synthesis parameters from controls
             const releasePercent = document.getElementById('release-slider').value;
             const tone = document.getElementById('tone-selector').value;
+            const transpose = document.getElementById('transpose-semitones').value;
+            const tempoScale = document.getElementById('tempo-scale').value;
+            const aMs = document.getElementById('adsr-attack-ms').value;
+            const dMs = document.getElementById('adsr-decay-ms').value;
+            const sLvl = document.getElementById('adsr-sustain').value;
+            const rMs = document.getElementById('adsr-release-ms').value;
+            const tremRate = document.getElementById('tremolo-rate').value;
+            const tremDepth = document.getElementById('tremolo-depth').value;
+            const gainDb = document.getElementById('gain-db').value;
+            const reverbWet = document.getElementById('reverb-wet').value;
+            const normalize = document.getElementById('normalize').checked;
             
             // Get audio settings
             const sampleRate = document.getElementById('sample-rate-select').value;
@@ -617,6 +682,17 @@
             // Add parameters to form data with correct name format
             formData.append('release_percent', releasePercent);
             formData.append('tone', tone);
+            formData.append('transpose_semitones', transpose);
+            formData.append('tempo_scale', tempoScale);
+            formData.append('adsr_attack_ms', aMs);
+            formData.append('adsr_decay_ms', dMs);
+            formData.append('adsr_sustain', sLvl);
+            formData.append('adsr_release_ms', rMs);
+            formData.append('tremolo_rate', tremRate);
+            formData.append('tremolo_depth', tremDepth);
+            formData.append('gain_db', gainDb);
+            formData.append('reverb_wet', reverbWet);
+            formData.append('normalize', normalize ? 'true' : 'false');
             formData.append('sample_rate', sampleRate);
             formData.append('bit_depth', bitDepth);
             formData.append('apply_mastering', mastering ? 'true' : 'false');

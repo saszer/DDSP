@@ -397,6 +397,8 @@ class HybridDDSPModelManager:
         self.model_path = None
         self.training_status = {"status": "idle", "progress": 0.0, "available_models": []}
         self.use_google_ddsp = Config.GOOGLE_DDSP_PRIORITY and DDSP_AVAILABLE
+        # Synthesis controls (defaults)
+        self.current_controls = self._default_controls()
         
         # Try to load existing trained models
         self._load_existing_models()
@@ -405,6 +407,40 @@ class HybridDDSPModelManager:
         if self.use_google_ddsp:
             print("Attempting to load Google DDSP model...")
             self.google_ddsp.load_model()
+
+    def _default_controls(self) -> Dict[str, Any]:
+        return {
+            'transpose_semitones': 0,
+            'tempo_scale': 1.0,
+            'adsr_attack_ms': 20.0,
+            'adsr_decay_ms': 50.0,
+            'adsr_sustain': 0.85,
+            'adsr_release_ms': 100.0,
+            'tremolo_rate': 5.0,
+            'tremolo_depth': 0.15,
+            'gain_db': 0.0,
+            'reverb_wet': 0.0,
+            'normalize': True,
+        }
+
+    def set_controls(self, controls: Dict[str, Any]):
+        try:
+            # Merge with defaults and coerce types
+            merged = self._default_controls()
+            for k, v in (controls or {}).items():
+                if k in ['transpose_semitones']:
+                    try: merged[k] = int(v)
+                    except: pass
+                elif k in ['adsr_attack_ms','adsr_decay_ms','adsr_release_ms','tremolo_rate','tremolo_depth','gain_db','reverb_wet','tempo_scale','adsr_sustain']:
+                    try: merged[k] = float(v)
+                    except: pass
+                elif k == 'normalize':
+                    if isinstance(v, str): merged[k] = v.lower() in ['1','true','yes','on']
+                    else: merged[k] = bool(v)
+            self.current_controls = merged
+            print(f"[CONTROLS] Updated controls: {self.current_controls}")
+        except Exception as e:
+            print(f"[CONTROLS] Failed to set controls: {e}")
     
     def _load_existing_models(self):
         """Load existing trained model files"""
@@ -873,24 +909,39 @@ class HybridDDSPModelManager:
             print(f"[TRAINED_AUDIO] Total output samples: {total_samples} = {total_samples/sample_rate:.2f}s")
             output = np.zeros(total_samples, dtype=np.float32)
             
-            # Synthesize each note using trained audio clips
+            # Synthesize each note using trained audio clips with enhanced MIDI details
             for note_info in notes:
-                freq = note_info['frequency']
-                velocity = note_info['velocity']
-                start_time = note_info.get('start', 0.0)  # Default to 0 if missing
+                # Extract enhanced MIDI parameters
+                freq = note_info['frequency']  # Already includes pitch bend
+                base_freq = note_info.get('base_frequency', freq)
+                velocity = note_info.get('velocity', 64)
+                effective_velocity = note_info.get('effective_velocity', velocity)  # Velocity * expression
+                expression = note_info.get('expression', 127)
+                modulation = note_info.get('modulation', 0)
+                pitch_bend = note_info.get('pitch_bend', 0.0)
+                start_time = note_info.get('start', 0.0)
                 duration = note_info['duration']
                 
                 if duration <= 0:
                     continue
                 
-                # Convert frequency to MIDI pitch
-                midi_pitch = int(librosa.hz_to_midi(freq))
+                # Convert frequency to MIDI pitch (use base frequency for lookup, then apply bend)
+                base_midi_pitch = int(librosa.hz_to_midi(base_freq))
+                # Apply transpose control
+                try:
+                    base_midi_pitch += int(self.current_controls.get('transpose_semitones', 0) or 0)
+                except Exception:
+                    pass
                 
                 # Find nearest trained pitch
-                nearest_pitch = min(trained_pitches.keys(), key=lambda p: abs(p - midi_pitch))
-                pitch_diff = midi_pitch - nearest_pitch
+                nearest_pitch = min(trained_pitches.keys(), key=lambda p: abs(p - base_midi_pitch))
+                pitch_diff = base_midi_pitch - nearest_pitch
                 
-                print(f"[TRAINED_AUDIO] Note: MIDI{midi_pitch} ({freq:.1f}Hz) -> using trained MIDI{nearest_pitch} (shift {pitch_diff} semitones)")
+                # Apply pitch bend on top of nearest pitch match
+                total_pitch_shift = pitch_diff + pitch_bend
+                
+                if abs(total_pitch_shift) > 0.1 or abs(pitch_diff) > 0.1:
+                    print(f"[TRAINED_AUDIO] Note: MIDI{base_midi_pitch} ({base_freq:.1f}Hz) -> trained MIDI{nearest_pitch} (shift {pitch_diff:.2f}semitones + bend {pitch_bend:.2f}semitones)")
                 
                 trained_feat = trained_pitches[nearest_pitch]
                 trained_audio = trained_feat['audio']
@@ -904,7 +955,7 @@ class HybridDDSPModelManager:
                     stretch_ratio = trained_duration / duration
                     
                     if 0.5 < stretch_ratio < 2.0:
-                        # Use librosa time stretch
+                        # Use librosa time stretch for natural sound
                         try:
                             audio = librosa.effects.time_stretch(trained_audio.astype(np.float32), rate=stretch_ratio)
                         except:
@@ -920,14 +971,14 @@ class HybridDDSPModelManager:
                 else:
                     audio = trained_audio.copy()
                 
-                # Pitch shift if needed
-                if pitch_diff != 0:
+                # Apply pitch shift (nearest pitch match + pitch bend)
+                if abs(total_pitch_shift) > 0.01:
                     try:
-                        audio = librosa.effects.pitch_shift(audio.astype(np.float32), sr=sample_rate, n_steps=pitch_diff)
+                        audio = librosa.effects.pitch_shift(audio.astype(np.float32), sr=sample_rate, n_steps=total_pitch_shift)
                     except Exception as e:
                         print(f"[TRAINED_AUDIO] Pitch shift failed: {e}, using frequency scaling")
-                        shift_ratio = 2 ** (pitch_diff / 12.0)
-                        audio = librosa.resample(audio.astype(np.float32), orig_sr=sample_rate, target_sr=int(sample_rate / shift_ratio))
+                        shift_ratio = 2 ** (total_pitch_shift / 12.0)
+                        audio = librosa.resample(audio.astype(np.float32), orig_sr=sample_rate, target_sr=int(sample_rate * shift_ratio))
                 
                 # Trim or pad to exact duration
                 if len(audio) > n_samples:
@@ -935,19 +986,57 @@ class HybridDDSPModelManager:
                 elif len(audio) < n_samples:
                     audio = np.pad(audio, (0, n_samples - len(audio)), mode='constant')
                 
-                # Apply velocity scaling
-                velocity_scale = (velocity / 127.0) ** 0.7
-                audio = audio * velocity_scale
+                # Apply velocity scaling (use effective_velocity which includes expression)
+                # Expression acts as a volume multiplier (0-127 -> 0.0-1.0)
+                expression_scale = expression / 127.0
+                velocity_scale = (effective_velocity / 127.0) ** 0.7  # Non-linear for realism
+                total_volume_scale = velocity_scale * expression_scale
+                audio = audio * total_volume_scale
                 
-                # Apply simple envelope
+                # Apply modulation (CC 1) and UI tremolo override
+                ui_trem_rate = float(self.current_controls.get('tremolo_rate', 5.0) or 5.0)
+                ui_trem_depth = float(self.current_controls.get('tremolo_depth', 0.15) or 0.15)
+                # If CC1 present, allow it to influence depth
+                cc_depth = (modulation / 127.0) * 0.15 if modulation else 0.0
+                mod_depth = max(ui_trem_depth, cc_depth)
+                mod_rate = ui_trem_rate
+                if mod_depth > 0.0 and mod_rate > 0.0:
+                    mod_samples = np.arange(len(audio))
+                    tremolo = 1.0 + mod_depth * np.sin(2 * np.pi * mod_rate * mod_samples / sample_rate)
+                    audio = audio * tremolo
+                
+                # Apply ADSR envelope for realistic attack/decay/sustain/release from controls
                 envelope = np.ones_like(audio)
-                fade_samples = min(int(0.01 * sample_rate), len(audio) // 4)  # 10ms fade
-                if fade_samples > 0:
-                    envelope[:fade_samples] = np.linspace(0, 1, fade_samples)
-                    envelope[-fade_samples:] = np.linspace(1, 0, fade_samples)
+                try:
+                    attack_ms = float(self.current_controls.get('adsr_attack_ms', 20.0) or 20.0)
+                    decay_ms = float(self.current_controls.get('adsr_decay_ms', 50.0) or 50.0)
+                    sustain_level = float(self.current_controls.get('adsr_sustain', 0.85) or 0.85)
+                    release_ms = float(self.current_controls.get('adsr_release_ms', 100.0) or 100.0)
+                except Exception:
+                    attack_ms, decay_ms, sustain_level, release_ms = 20.0, 50.0, 0.85, 100.0
+                attack_samples = int((attack_ms / 1000.0) * sample_rate)
+                decay_samples = int((decay_ms / 1000.0) * sample_rate)
+                release_samples = int((release_ms / 1000.0) * sample_rate)
+                
+                if len(audio) > attack_samples + decay_samples + release_samples:
+                    # Attack
+                    envelope[:attack_samples] = np.linspace(0, 1, attack_samples)
+                    # Decay
+                    envelope[attack_samples:attack_samples+decay_samples] = np.linspace(1, sustain_level, decay_samples)
+                    # Sustain (middle part stays at sustain_level)
+                    # Release
+                    if release_samples > 0:
+                        envelope[-release_samples:] = np.linspace(sustain_level, 0, release_samples)
+                else:
+                    # Short notes: simple fade in/out
+                    fade_samples = min(int(0.01 * sample_rate), len(audio) // 4)
+                    if fade_samples > 0:
+                        envelope[:fade_samples] = np.linspace(0, 1, fade_samples)
+                        envelope[-fade_samples:] = np.linspace(1, 0, fade_samples)
+                
                 audio = audio * envelope
                 
-                # Mix into output
+                # Mix into output (supports polyphony - multiple simultaneous notes)
                 start_sample = int(start_time * sample_rate)
                 end_sample = start_sample + len(audio)
                 
@@ -955,12 +1044,47 @@ class HybridDDSPModelManager:
                     if end_sample > total_samples:
                         audio = audio[:total_samples - start_sample]
                         end_sample = total_samples
+                    # Add (mix) with existing audio for polyphony
                     output[start_sample:end_sample] += audio
             
-            # Normalize to prevent clipping
+            # Optional reverb and gain/normalize
+            try:
+                gain_db = float(self.current_controls.get('gain_db', 0.0) or 0.0)
+                reverb_wet = float(self.current_controls.get('reverb_wet', 0.0) or 0.0)
+                do_normalize = bool(self.current_controls.get('normalize', True))
+            except Exception:
+                gain_db, reverb_wet, do_normalize = 0.0, 0.0, True
+
+            # Apply simple mono reverb (feedback delay network)
+            if reverb_wet > 0.001:
+                d1 = int(0.0297 * sample_rate)
+                d2 = int(0.0371 * sample_rate)
+                g1 = 0.773
+                g2 = 0.802
+                verb = np.zeros_like(output)
+                # Comb filters
+                for n in range(len(output)):
+                    x = output[n]
+                    if n - d1 >= 0:
+                        x += g1 * verb[n - d1]
+                    verb[n] = x
+                temp = np.zeros_like(verb)
+                for n in range(len(verb)):
+                    x = verb[n]
+                    if n - d2 >= 0:
+                        x += g2 * temp[n - d2]
+                    temp[n] = x
+                # Mix dry/wet
+                output = (1 - reverb_wet) * output + reverb_wet * temp
+
+            # Apply gain in dB
+            if abs(gain_db) > 0.01:
+                output = output * (10 ** (gain_db / 20.0))
+
+            # Normalize to prevent clipping (optional)
             max_val = np.max(np.abs(output))
-            if max_val > 1.0:
-                output = output / max_val * 0.95
+            if do_normalize and max_val > 0:
+                output = output / max(max_val, 1e-6) * 0.95
             
             print(f"[TRAINED_AUDIO] [OK] Generated {len(output)} samples using trained audio clips")
             return output.tolist()
@@ -1075,7 +1199,45 @@ class HybridDDSPModelManager:
                 )
                 audio.extend(note_audio)
             
-            return audio
+            import numpy as np
+            output = np.array(audio, dtype=np.float32)
+            sr = Config.SAMPLE_RATE
+            # Optional reverb/gain/normalize similar to trained path
+            try:
+                gain_db = float(self.current_controls.get('gain_db', 0.0) or 0.0)
+                reverb_wet = float(self.current_controls.get('reverb_wet', 0.0) or 0.0)
+                do_normalize = bool(self.current_controls.get('normalize', True))
+            except Exception:
+                gain_db, reverb_wet, do_normalize = 0.0, 0.0, True
+
+            if reverb_wet > 0.001:
+                d1 = int(0.0297 * sr)
+                d2 = int(0.0371 * sr)
+                g1 = 0.773
+                g2 = 0.802
+                verb = np.zeros_like(output)
+                for n in range(len(output)):
+                    x = output[n]
+                    if n - d1 >= 0:
+                        x += g1 * verb[n - d1]
+                    verb[n] = x
+                temp = np.zeros_like(verb)
+                for n in range(len(verb)):
+                    x = verb[n]
+                    if n - d2 >= 0:
+                        x += g2 * temp[n - d2]
+                    temp[n] = x
+                output = (1 - reverb_wet) * output + reverb_wet * temp
+
+            if abs(gain_db) > 0.01:
+                output = output * (10 ** (gain_db / 20.0))
+
+            if do_normalize:
+                max_val = float(np.max(np.abs(output)))
+                if max_val > 0:
+                    output = output / max_val * 0.95
+
+            return output.tolist()
             
         except Exception as e:
             print(f"Custom synthesis failed: {e}")
@@ -1094,7 +1256,7 @@ class HybridDDSPModelManager:
             return -60.0 + 60.0 * ratio
     
     def _parse_midi_simple(self, midi_data: bytes) -> List[Dict]:
-        """Parse MIDI data and extract real notes"""
+        """Parse MIDI data and extract notes with all details (tempo, pitch bends, expression, etc.)"""
         try:
             notes = []
             
@@ -1109,45 +1271,122 @@ class HybridDDSPModelManager:
                 
                 print(f"Parsed MIDI file: {midi_file.ticks_per_beat} ticks per beat, {len(midi_file.tracks)} tracks")
                 
-                # Extract notes from all tracks
-                for track in midi_file.tracks:
+                # Calculate tempo - default 120 BPM
+                tempo_bpm = 120.0
+                seconds_per_tick = 0.5 / midi_file.ticks_per_beat  # Default for 120 BPM
+                # Apply global tempo scaling control
+                try:
+                    seconds_per_tick = seconds_per_tick / float(self.current_controls.get('tempo_scale', 1.0) or 1.0)
+                except Exception:
+                    pass
+                
+                # Extract notes from all tracks with enhanced details
+                for track_idx, track in enumerate(midi_file.tracks):
                     current_time_ticks = 0
-                    active_notes = {}  # {note: start_time_ticks}
+                    current_time_seconds = 0.0
+                    active_notes = {}  # {note: {'start_ticks': int, 'start_seconds': float, 'velocity': int, 'pitch_bend': float, 'expression': int}}
+                    
+                    # Track-level state
+                    pitch_bend = 0.0  # Semitones, 0 = no bend
+                    expression = 127  # MIDI expression (0-127), default = max
+                    modulation = 0  # MIDI modulation (0-127)
                     
                     for msg in track:
-                        current_time_ticks += msg.time
+                        delta_ticks = msg.time
+                        current_time_ticks += delta_ticks
+                        delta_seconds = delta_ticks * seconds_per_tick
+                        current_time_seconds += delta_seconds
                         
-                        if msg.type == 'note_on' and msg.velocity > 0:
-                            # Note started
-                            active_notes[msg.note] = current_time_ticks
+                        # Handle tempo changes
+                        if msg.type == 'set_tempo':
+                            tempo_bpm = mido.tempo2bpm(msg.tempo)
+                            seconds_per_tick = (60.0 / tempo_bpm) / midi_file.ticks_per_beat
+                            try:
+                                seconds_per_tick = seconds_per_tick / float(self.current_controls.get('tempo_scale', 1.0) or 1.0)
+                            except Exception:
+                                pass
+                            print(f"Track {track_idx}: Tempo change to {tempo_bpm:.1f} BPM")
+                        
+                        # Handle pitch bend (affects all active notes)
+                        elif msg.type == 'pitchwheel':
+                            # MIDI pitch bend: -8192 to 8191, maps to -2 to +2 semitones
+                            pitch_bend = (msg.pitch / 8192.0) * 2.0
+                            # Update active notes
+                            for note_num in active_notes:
+                                active_notes[note_num]['pitch_bend'] = pitch_bend
+                        
+                        # Handle expression (CC 11) - affects volume/dynamics
+                        elif msg.type == 'control_change' and msg.control == 11:
+                            expression = msg.value
+                            # Update active notes
+                            for note_num in active_notes:
+                                active_notes[note_num]['expression'] = expression
+                        
+                        # Handle modulation (CC 1)
+                        elif msg.type == 'control_change' and msg.control == 1:
+                            modulation = msg.value
+                        
+                        # Handle note on
+                        elif msg.type == 'note_on' and msg.velocity > 0:
+                            # Note started - store full context
+                            active_notes[msg.note] = {
+                                'start_ticks': current_time_ticks,
+                                'start_seconds': current_time_seconds,
+                                'velocity': msg.velocity,
+                                'pitch_bend': pitch_bend,
+                                'expression': expression,
+                                'modulation': modulation
+                            }
                             
+                        # Handle note off
                         elif msg.type == 'note_off' or (msg.type == 'note_on' and msg.velocity == 0):
                             # Note ended
                             if msg.note in active_notes:
-                                start_ticks = active_notes[msg.note]
+                                note_data = active_notes[msg.note]
+                                start_ticks = note_data['start_ticks']
+                                start_seconds = note_data['start_seconds']
                                 duration_ticks = current_time_ticks - start_ticks
+                                duration_seconds = current_time_seconds - start_seconds
                                 
                                 # Convert MIDI note number to frequency
-                                frequency = 440.0 * (2.0 ** ((msg.note - 69) / 12.0))
+                                base_frequency = 440.0 * (2.0 ** ((msg.note - 69) / 12.0))
                                 
-                                # Convert ticks to seconds (assume 120 BPM => quarter = 0.5s)
-                                start_seconds = start_ticks / midi_file.ticks_per_beat * 0.5
-                                duration_seconds = duration_ticks / midi_file.ticks_per_beat * 0.5
+                                # Apply pitch bend
+                                pitch_bend_semitones = note_data.get('pitch_bend', 0.0)
+                                frequency = base_frequency * (2.0 ** (pitch_bend_semitones / 12.0))
+                                
+                                # Get velocity and expression
+                                velocity = note_data.get('velocity', 64)
+                                expression_val = note_data.get('expression', 127)
+                                
+                                # Combine velocity and expression for final volume
+                                # Expression (0-127) acts as a multiplier on velocity
+                                effective_velocity = int((velocity * expression_val) / 127.0)
                                 
                                 notes.append({
                                     'frequency': frequency,
-                                    'velocity': msg.velocity if msg.type == 'note_off' else msg.velocity,
+                                    'base_frequency': base_frequency,  # Original pitch
+                                    'velocity': velocity,  # Original note-on velocity
+                                    'effective_velocity': effective_velocity,  # Velocity * expression
+                                    'expression': expression_val,  # CC 11 value
+                                    'modulation': note_data.get('modulation', 0),  # CC 1 value
+                                    'pitch_bend': pitch_bend_semitones,  # Semitones
                                     'start': max(0.0, float(start_seconds)),
-                                    'duration': max(0.1, float(duration_seconds)),
+                                    'duration': max(0.01, float(duration_seconds)),  # Minimum 10ms
                                     'midi_note': msg.note
                                 })
                                 
                                 del active_notes[msg.note]
                 
                 print(f"Extracted {len(notes)} notes from MIDI file")
+                if notes:
+                    print(f"Tempo: {tempo_bpm:.1f} BPM")
+                    print(f"Notes with pitch bend: {sum(1 for n in notes if abs(n.get('pitch_bend', 0)) > 0.01)}")
+                    print(f"Notes with expression: {sum(1 for n in notes if n.get('expression', 127) != 127)}")
                 
                 if notes:
-                    # Sort by start time (already in track order)
+                    # Sort by start time
+                    notes.sort(key=lambda n: n['start'])
                     return notes
                     
             except ImportError:
@@ -1561,6 +1800,27 @@ class HybridDDSPRequestHandler(BaseHTTPRequestHandler):
                         elif b'name="selected_model"' in headers or b'name="model"' in headers:
                             selected_model = body.decode('utf-8', errors='ignore').strip()
                             print(f"Selected model from request: {selected_model}")
+                        else:
+                            # Collect synthesis control fields
+                            try:
+                                header_str = headers.decode('utf-8', errors='ignore')
+                                if 'name=' in header_str:
+                                    nstart = header_str.find('name="')
+                                    if nstart >= 0:
+                                        nstart += 6
+                                        nend = header_str.find('"', nstart)
+                                        if nend > nstart:
+                                            field_name = header_str[nstart:nend]
+                                            if field_name in [
+                                                'transpose_semitones','tempo_scale','adsr_attack_ms','adsr_decay_ms','adsr_sustain','adsr_release_ms',
+                                                'tremolo_rate','tremolo_depth','gain_db','reverb_wet','normalize','release_percent','tone'
+                                            ]:
+                                                field_value = body.decode('utf-8', errors='ignore').strip()
+                                                if not hasattr(self, '_collected_controls'):
+                                                    self._collected_controls = {}
+                                                self._collected_controls[field_name] = field_value
+                            except Exception as _:
+                                pass
             else:
                 # Not multipart, treat as raw MIDI
                 midi_data = raw_data
@@ -1585,6 +1845,11 @@ class HybridDDSPRequestHandler(BaseHTTPRequestHandler):
             if selected_model and selected_model != model_manager.model:
                 print(f"Switching to model: {selected_model}")
                 model_manager._switch_model(selected_model)
+            
+            # Apply collected synthesis controls (if any)
+            controls = getattr(self, '_collected_controls', {}) or {}
+            if controls:
+                model_manager.set_controls(controls)
             
             # Synthesize audio
             print(f"Synthesizing audio from MIDI ({len(midi_data)} bytes)...")
