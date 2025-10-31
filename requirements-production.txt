@@ -3,17 +3,10 @@
 
 # Core Audio Processing
 numpy>=1.24.0
-scipy>=1.10.0
 
-# Audio Analysis & Synthesis
-librosa>=0.10.0
-soundfile>=0.12.0
-resampy>=0.4.2  # High-quality resampling
-
-# MIDI Processing
+# MIDI Processing (optional but recommended for better MIDI parsing)
 mido>=1.3.0
-pretty-midi>=0.2.10
 
-# Note: TensorFlow/DDSP NOT needed in production
-# Using sample-based synthesis with pre-trained models
+# Note: TensorFlow/DDSP are optional - server works without them
+# The hybrid server uses enhanced custom synthesis as fallback
 
