@@ -1,15 +1,19 @@
 # Fly.io configuration for DDSP Neural Cello
 # embracingearth.space
 
-app = "ddsp"  # Change this to your unique name
+app = "ddsp"
 primary_region = "iad"
 
 [build]
+  # Explicitly use Docker build - this is a Python app, not Next.js
+  # Force Docker build to prevent Next.js auto-detection
   dockerfile = "Dockerfile"
   buildargs = []
+  ignorefile = ".dockerignore"
   
 [deploy]
   strategy = "immediate"
+  # Release command is not needed - we run Python directly
 
 [env]
   PORT = "8000"

@@ -1,0 +1,16 @@
+# Fly.io ignore file
+# Prevent Next.js auto-detection
+
+# Next.js build files (we only use it for Tailwind CSS build, not as the app)
+.next/
+out/
+node_modules/
+
+# Next.js source files (we use public/index.html instead)
+src/pages/
+src/components/
+
+# Next.js config files (we build CSS separately)
+next.config.js
+tsconfig.json
+

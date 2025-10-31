@@ -17,10 +17,16 @@ output/
 # models/*.bak
 # models/*.backup
 
-# Frontend build
+# Frontend build (we only need Node for Tailwind CSS build, not Next.js runtime)
 node_modules/
 .next/
 out/
+src/
+
+# Next.js configuration (we use public/index.html, not Next.js app)
+next.config.js
+tsconfig.json
+next-env.d.ts
 
 # IDE
 .vscode/
