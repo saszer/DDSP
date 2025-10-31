@@ -36,7 +36,7 @@ wave==0.0.2
 pydub[scipy]==0.25.1
 
 # Utilities
-pydantic==2.3.0
+pydantic==2.4.0
 python-dotenv==1.0.0
 loguru==0.7.0
 
