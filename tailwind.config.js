@@ -3,6 +3,7 @@ module.exports = {
     './src/pages/**/*.{js,ts,jsx,tsx,mdx}',
     './src/components/**/*.{js,ts,jsx,tsx,mdx}',
     './src/app/**/*.{js,ts,jsx,tsx,mdx}',
+    './public/**/*.html',
   ],
   theme: {
     extend: {
@@ -125,28 +126,4 @@ module.exports = {
     require('@tailwindcss/aspect-ratio'),
   ],
   darkMode: 'class',
-  purge: {
-    enabled: process.env.NODE_ENV === 'production',
-    content: [
-      './src/**/*.{js,ts,jsx,tsx}',
-      './public/**/*.html',
-    ],
-    options: {
-      safelist: [
-        'animate-fade-in',
-        'animate-slide-up',
-        'animate-scale-in',
-        'animate-audio-wave',
-        'glass',
-        'glass-dark',
-        'btn-primary',
-        'btn-secondary',
-        'quality-indicator',
-        'quality-draft',
-        'quality-standard',
-        'quality-professional',
-        'quality-mastering',
-      ],
-    },
-  },
 };

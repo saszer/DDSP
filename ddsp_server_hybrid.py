@@ -781,6 +781,8 @@ class HybridDDSPRequestHandler(BaseHTTPRequestHandler):
                 self._handle_training_status()
             elif path.startswith('/api/download/'):
                 self._handle_download(path)
+            elif path == '/styles.css' or path.startswith('/styles.css'):
+                self._handle_static_css('public/styles.css')
             else:
                 self._handle_not_found()
                 
@@ -1120,6 +1122,28 @@ class HybridDDSPRequestHandler(BaseHTTPRequestHandler):
         except Exception as e:
             print(f"Download error: {e}")
             self._send_error_response(500, f"Download failed: {e}")
+    
+    def _handle_static_css(self, file_path: str):
+        """Handle static CSS file serving"""
+        try:
+            if os.path.exists(file_path):
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    css_content = f.read()
+                
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/css; charset=utf-8')
+                self.send_header('Content-Length', str(len(css_content.encode('utf-8'))))
+                self.end_headers()
+                self.wfile.write(css_content.encode('utf-8'))
+            else:
+                # If CSS file doesn't exist, serve empty CSS
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/css; charset=utf-8')
+                self.send_header('Content-Length', '0')
+                self.end_headers()
+        except Exception as e:
+            print(f"CSS serving error: {e}")
+            self._send_error_response(500, f"Error serving CSS: {e}")
     
     def _handle_not_found(self):
         """Handle 404 errors"""

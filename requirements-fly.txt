@@ -1,0 +1,13 @@
+# Minimal requirements for Fly.io deployment
+# Only what ddsp_server.py actually needs
+
+# Core dependencies
+numpy
+scipy
+librosa
+soundfile
+mido
+pretty_midi
+aiofiles
+pydantic
+
